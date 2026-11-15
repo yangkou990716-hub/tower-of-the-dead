@@ -1,0 +1,10 @@
+import { chromium } from 'playwright-core';
+const b = await chromium.launch({ executablePath: '/usr/bin/google-chrome', args: ['--no-sandbox', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const p = await (await b.newContext({ viewport: { width: 960, height: 540 } })).newPage();
+p.on('pageerror', (e) => console.log('[pageerror]', e.message));
+await p.goto('http://localhost:5173/'); await p.waitForFunction(() => window.__totd);
+await p.evaluate(async () => { const t = window.__totd; await t.App.enterSlot(1); t.UI.closeAll(); t.App.startRun('knight', 'normal'); });
+await p.waitForTimeout(1500);
+await p.evaluate(() => { const s = window.__totd.App.game.scene.getScene('game'); s.rt.setBlendMode(0); });
+await p.waitForTimeout(800); await p.screenshot({ path: '/tmp/rt.png' });
+await b.close();
