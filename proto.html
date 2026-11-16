@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#05080a">
+<title>亡者之塔 視覺原型</title>
+<style>
+  :root { --bg: #05080a; --fg: #e8efe6; --dim: #9fb0a8; --acc: #7dffd0; --panel: rgba(5, 8, 10, .72); }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden; touch-action: none; -webkit-user-select: none; user-select: none;
+    font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, "Noto Sans TC", monospace; }
+  #app, #app canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #panel { position: fixed; top: max(8px, env(safe-area-inset-top)); left: max(8px, env(safe-area-inset-left)); max-width: min(420px, calc(100vw - 16px)); background: var(--panel); border: 1px solid #ffffff22; border-radius: 8px; padding: 6px 8px; }
+  #panel-t { cursor: pointer; color: var(--acc); font-weight: 700; margin-bottom: 3px; }
+  #stats { white-space: pre; margin: 0; font-size: 11.5px; }
+  .row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; align-items: center; }
+  .row span { color: var(--dim); min-width: 2.6em; }
+  button { font: inherit; color: var(--fg); background: #ffffff14; border: 1px solid #ffffff2a; border-radius: 6px; padding: 5px 8px; min-height: 30px; }
+  button.on { background: #7dffd033; border-color: var(--acc); color: #fff; }
+  body.mini #panel .row { display: none; }
+  #hint { position: fixed; right: max(8px, env(safe-area-inset-right)); bottom: max(8px, env(safe-area-inset-bottom)); color: var(--dim); background: var(--panel); padding: 4px 8px; border-radius: 6px; font-size: 11px; max-width: 46vw; }
+  #stick { display: none; position: fixed; width: 110px; height: 110px; margin: -55px 0 0 -55px; border-radius: 50%; border: 2px solid #ffffff44; pointer-events: none; }
+  #stick i { position: absolute; left: 35px; top: 35px; width: 40px; height: 40px; border-radius: 50%; background: #ffffff55; }
+  #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 15px; color: var(--dim); background: var(--bg); padding: 16px; text-align: center; }
+  #report { display: none; position: fixed; inset: 0; background: #000c; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 16px; }
+  #report textarea { width: min(640px, 100%); height: 55vh; font: 12px ui-monospace, monospace; background: #0b0e12; color: var(--fg); border: 1px solid #ffffff33; border-radius: 6px; -webkit-user-select: text; user-select: text; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="panel">
+  <div id="panel-t">亡者之塔 視覺原型 ▾</div>
+  <pre id="stats">…</pre>
+  <div class="row"><span>畫質</span><button data-q="high">高</button><button data-q="balanced">平衡</button><button data-q="perf">效能</button><button id="auto">自動降級</button></div>
+  <div class="row"><span>資產</span><button data-r="proc">程序化</button><button data-r="kaykit">KayKit</button></div>
+  <div class="row"><span>後端</span><button data-api="webgpu">WebGPU</button><button data-api="webgl">WebGL 2</button></div>
+  <div class="row"><button id="reset">重設統計</button><button id="copy">產生回報</button></div>
+</div>
+<div id="hint">左半邊拖曳＝移動（放手 3 秒後自動遊玩）／點火盆＝點燃或熄滅／電腦：WASD、F</div>
+<div id="stick"><i></i></div>
+<div id="boot">載入中…</div>
+<div id="report"><b></b><textarea readonly></textarea><button>關閉</button></div>
+<script type="module" src="/src/proto/main.ts"></script>
+</body>
+</html>
