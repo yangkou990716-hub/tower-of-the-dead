@@ -5,7 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   base: './',
-  build: { target: 'es2022', outDir: 'dist-proto', chunkSizeWarningLimit: 3000, assetsInlineLimit: 0, rollupOptions: { input: { proto: 'proto.html' } } },
+  build: { target: 'es2022', outDir: 'dist-proto', chunkSizeWarningLimit: 3000, assetsInlineLimit: 0, rollupOptions: { input: { proto: 'proto.html', showcase: 'showcase.html' } } },
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',
@@ -18,7 +18,7 @@ export default defineConfig({
         icons: [{ src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' }],
       },
       workbox: {
-        globPatterns: ['proto.html', 'assets/*.js', 'models/kaykit/*.glb', 'icons/icon-192.png', 'proto.webmanifest'],
+        globPatterns: ['proto.html', 'showcase.html', 'assets/*.{js,css}', 'models/kaykit/*.glb', 'showcase/models/*.glb', 'icons/icon-192.png', 'proto.webmanifest'],
         maximumFileSizeToCacheInBytes: 8_000_000,
         cleanupOutdatedCaches: true,
         navigateFallback: 'proto.html',

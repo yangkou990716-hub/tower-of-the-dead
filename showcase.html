@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#2a2038">
+<title>亡者之塔 展示場景</title>
+</head>
+<body>
+<div id="app"></div>
+<div id="panel">
+  <div id="panel-t">亡者之塔・菌林遺跡 ▾</div>
+  <pre id="stats">…</pre>
+  <div class="row"><button data-q="high">高</button><button data-q="bal">平衡</button><button data-q="perf">效能</button><button data-api="webgpu">WebGPU</button><button data-api="webgl">WebGL 2</button><button id="copy">產生回報</button></div>
+</div>
+<div id="boss"><b>蘑 菇 王</b><div class="bar"><i></i></div></div>
+<div id="vitals"><div class="bar" id="hp"><i></i></div><div class="bar" id="st"><i></i></div><span id="pot"></span></div>
+<div id="toast"></div>
+<div id="hint"><kbd>WASD</kbd>移動 <kbd>滑鼠</kbd>瞄準 <kbd>左鍵</kbd>攻擊（按住蓄力）<br><kbd>空白</kbd>翻滾閃避 <kbd>右鍵</kbd>/<kbd>Shift</kbd>彈反 <kbd>R</kbd>藥水</div>
+<div id="stick"><i></i></div>
+<div id="pad">
+  <div class="tb" id="btn-atk" data-b="attack">⚔</div>
+  <div class="tb" id="btn-dodge" data-b="dodge">⤳</div>
+  <div class="tb" id="btn-parry" data-b="parry">🛡</div>
+  <div class="tb" id="btn-pot" data-b="potion">✚</div>
+</div>
+<div id="rot">請把手機橫放</div>
+<div id="boot"><b>把最後的燈火，帶到塔底。</b><div class="bar"><i></i></div><span>載入中…</span></div>
+<div id="report"><b></b><textarea readonly></textarea><button>關閉</button></div>
+<script type="module" src="/src/showcase/main.ts"></script>
+</body>
+</html>

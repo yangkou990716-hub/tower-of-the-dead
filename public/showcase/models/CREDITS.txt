@@ -1,0 +1,13 @@
+showcase 展示場景使用的外部 3D 模型
+
+rogue.glb（主角）、mushroom_king.glb（蘑菇王／Boss）、mushroom_imp.glb（蘑菇小妖）
+作者：Quaternius（https://quaternius.com）
+授權：CC0 1.0（公眾領域，可商用，不需署名）
+取得途徑：npm 套件 @netforge/asset-library-files 0.2.0（MIT；其中 library/ 為 meshopt 壓縮後的 CC0 素材）
+原始來源頁（依該套件 manifest/lowpoly.json 記錄，本環境無法連線查證）：
+  rogue           https://poly.pizza/m/DgOCW9ZCRJ
+  mushroom_king   https://poly.pizza/m/grnFTziU8u
+  mushroom_imp    https://poly.pizza/m/LWKmS30Xxl
+CC0 法律條文：CC0-1.0.txt
+
+其餘場景物件（地面、草、岩石、巨型蘑菇、遺跡、水晶、樹、天空、特效）全部由程式產生，沒有外部素材。
