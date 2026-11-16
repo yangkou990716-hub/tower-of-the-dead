@@ -6,7 +6,6 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import { W } from '../sim/state';
 import { T, RW, RH } from '../sim/util';
-import { EN } from '../sim/data';
 import { TIERS, Tier } from './quality';
 import { buildRoomView, RoomView, Route, LightSrc, Brazier } from './room';
 import { makePlayer, PlayerView, Actors } from './actors';
@@ -23,7 +22,7 @@ export class Scene3D {
   fx = new Fx(); tier: Tier; route: Route; base: string;
   kay: Kay | null = null; kayInfo = ''; private kayLoad: Promise<Kay> | null = null;
   roomView: RoomView | null = null; player: PlayerView | null = null; actors: Actors | null = null; curRoom: any = null;
-  camTarget = new THREE.Vector3(); busy = false; trans = { n: 0, worst: 0 };
+  camTarget = new THREE.Vector3(); busy = false; trans = { n: 0, worst: 0, last: 0 }; private playerRoute: Route | '' = '';
   private hemi = new THREE.HemisphereLight('#8aa4b6', '#1e2624', 0.95);
   private keyLight = new THREE.SpotLight('#ffd9a0', 70, 20, 1.2, 0.85, 1.4); // 提燈主光（有陰影）
   private moon = new THREE.DirectionalLight('#8fb4d8', 0.6);                 // 冷色補光（無陰影）
@@ -98,11 +97,13 @@ export class Scene3D {
     const { scene } = this;
     if (this.roomView) { scene.remove(this.roomView.group); this.roomView.dispose(); }
     if (this.actors) { this.actors.clear(); scene.remove(this.actors.root); }
-    if (this.player) { scene.remove(this.player.obj); this.player.dispose(); }
     const k = this.route === 'kaykit' ? this.kay : null, blob = !TIERS[this.tier].shadow;
+    // 玩家模型跨房間保留；只有換資產路線時重建
+    if (this.player && this.playerRoute !== this.route) { scene.remove(this.player.obj); this.player.dispose(); this.player = null; }
     this.roomView = buildRoomView(W.room, this.route, k); scene.add(this.roomView.group);
     this.actors = new Actors(k); scene.add(this.actors.root); this.actors.setBlob(blob);
-    this.player = makePlayer(k); scene.add(this.player.obj); this.player.obj.userData.blob.visible = blob;
+    if (!this.player) { this.player = makePlayer(k); this.playerRoute = this.route; scene.add(this.player.obj); }
+    this.player.obj.userData.blob.visible = blob;
     const pal = W.room.biome.pal; scene.background = new THREE.Color(pal.bg); scene.fog = new THREE.FogExp2(pal.bg, 0.016);
     this.curRoom = W.room; this.camTarget.set(W.p.x / T, 0, W.p.y / T); this.updCamera(1);
   }
@@ -110,19 +111,18 @@ export class Scene3D {
   async rebuildAsync() {
     this.busy = true; const t0 = performance.now();
     this.rebuild();
-    try { await this.renderer.compileAsync(this.scene, this.camera); } catch (e) { console.warn(e); }
-    const ms = performance.now() - t0; this.trans.n++; this.trans.worst = Math.max(this.trans.worst, ms);
+    // 最多等 1.2 秒；沒編完的部分在之後的幀裡照常完成（寧可短暫掉幀，也不要長時間黑幕）
+    const cap = new Promise((r) => setTimeout(r, 1200));
+    try { await Promise.race([this.renderer.compileAsync(this.scene, this.camera), cap]); } catch (e) { console.warn(e); }
+    const ms = performance.now() - t0; this.trans.n++; this.trans.last = ms; this.trans.worst = Math.max(this.trans.worst, ms);
     this.busy = false; return ms;
   }
-  /** 把所有敵人種類與物件先放進場景編譯一次，避免第一次出現時卡頓。 */
+  /** 每種敵人與物件各做一個樣本，在場景的光源下預先編譯著色器，避免第一次出現時卡頓。
+   *  不碰 W、不需暫停模擬；樣本不加進場景。 */
   async warmup() {
-    const a = this.actors; if (!a) return; this.busy = true; // 暖機期間 W 被暫時換成假敵人，呼叫端不可推進模擬
-    const blob = !TIERS[this.tier].shadow, ids = ['slime', 'hound', 'spitter', 'guard', 'matriarch'], saved = W.ents, so = W.objs;
-    W.ents = ids.map((id, i) => ({ uid: -1 - i, id, d: (EN as any)[id], x: W.p.x + (i - 2) * 30, y: W.p.y, r: (EN as any)[id].r, a: 0, state: 'move', t: 1, flash: 0, moving: true })) as any;
-    W.objs = so.concat([{ uid: -99, k: 'chest', x: W.p.x, y: W.p.y }, { uid: -98, k: 'stairs', x: W.p.x, y: W.p.y }, { uid: -97, k: 'item', x: W.p.x, y: W.p.y }, { uid: -96, k: 'fire', x: W.p.x, y: W.p.y }] as any);
-    a.update(0, 0.016, blob);
-    try { await this.renderer.compileAsync(this.scene, this.camera); } catch (e) { console.warn(e); }
-    W.ents = saved; W.objs = so; a.update(0, 0.016, blob); for (const c of a.corpses) a.root.remove(c.g); a.corpses = []; this.busy = false;
+    const a = this.actors; if (!a) return;
+    const g = a.samples(); g.position.copy(this.camTarget); g.updateMatrixWorld(true);
+    try { await this.renderer.compileAsync(g, this.camera, this.scene); } catch (e) { console.warn(e); }
   }
 
   // ---------- 每幀 ----------

@@ -4,6 +4,7 @@ import * as THREE from 'three/webgpu';
 import { RW, RH } from '../sim/util';
 import { stoneTex, mossTex, rippleNormal, metalTex, softDisc } from './textures';
 import type { Kay } from './kaykit';
+import { ENV, pick } from './manifest';
 
 export type Route = 'proc' | 'kaykit';
 export interface LightSrc { x: number; y: number; z: number; col: THREE.Color; int: number; dist: number; flicker: number; on: () => boolean; prio: number; }
@@ -83,10 +84,10 @@ export function buildRoomView(room: any, route: Route, kay: Kay | null): RoomVie
 
   // ---- 地板 ----
   if (useK) {
-    const sets: Record<string, THREE.Matrix4[]> = { floor_tile_small: [], floor_tile_small_broken_A: [], floor_tile_small_weeds_A: [], floor_dirt_small_A: [] };
+    const sets: Record<string, THREE.Matrix4[]> = {};
     for (let y = 1; y < RH - 1; y++) for (let x = 1; x < RW - 1; x++) {
-      const r = hsh(seed, x, y), k = r < 0.72 ? 'floor_tile_small' : r < 0.84 ? 'floor_tile_small_broken_A' : r < 0.93 ? 'floor_tile_small_weeds_A' : 'floor_dirt_small_A';
-      sets[k].push(mtx(x + 0.5, 0, y + 0.5, 0.5, 0.5, 0.5, Math.floor(hsh(seed, y, x) * 4) * Math.PI / 2));
+      const f = pick(ENV.floor, hsh(seed, x, y));
+      (sets[f.file] ||= []).push(mtx(x + 0.5, 0, y + 0.5, f.s, f.s, f.s, Math.floor(hsh(seed, y, x) * 4) * Math.PI / 2));
     }
     for (const k in sets) for (const im of kay.inst(k, sets[k], false, true)) add(im);
   } else {
@@ -106,7 +107,7 @@ export function buildRoomView(room: any, route: Route, kay: Kay | null): RoomVie
   if (useK) {
     const W: THREE.Matrix4[] = [], low: THREE.Matrix4[] = [];
     const seg = (cx: number, cz: number, len: number, ry: number, side: string) => {
-      const sx = 0.5 * len / 2, m4 = mtx(cx, 0, cz, sx, side === 's' ? 0.11 : 0.5, 0.5, ry);
+      const ws = ENV.wall.s, sx = ws * len / 2, m4 = mtx(cx, 0, cz, sx, side === 's' ? ws * 0.22 : ws, ws, ry);
       (side === 's' ? low : W).push(m4);
     };
     for (const side of ['n', 's', 'w', 'e']) {
@@ -117,16 +118,16 @@ export function buildRoomView(room: any, route: Route, kay: Kay | null): RoomVie
       for (let c = L - 1; c > mid + 1.5; c -= 2) put(c, 2);
       if (!door) put(mid, 3);
       else {
-        const dw = kay.clone('wall_doorway'); const s = 0.75;
-        dw.scale.set(s, side === 's' ? 0.2 : s * 0.67, s); dw.rotation.y = ry;
+        const D = ENV.door, dw = kay.clone(D.file);
+        dw.scale.set(D.s, side === 's' ? D.h * 0.4 : D.h, D.s); dw.rotation.y = ry;
         if (horiz) dw.position.set(mid, 0, fixed); else dw.position.set(fixed, 0, mid);
-        const leaf = dw.getObjectByName('wall_doorway_door'); if (leaf) doors.push(leaf);
+        const leaf = dw.getObjectByName(D.leaf); if (leaf) doors.push(leaf);
         add(dw);
       }
     }
-    for (const im of kay.inst('wall', W, true, true)) add(im);
-    for (const im of kay.inst('wall', low, true, true)) add(im);
-    for (const [x, z] of [[0.5, 0.5], [RW - 0.5, 0.5]]) { const p = kay.clone('pillar'); p.position.set(x, 0, z); p.scale.set(0.5, 0.55, 0.5); add(p); }
+    for (const im of kay.inst(ENV.wall.file, W, true, true)) add(im);
+    for (const im of kay.inst(ENV.wall.file, low, true, true)) add(im);
+    for (const [x, z] of [[0.5, 0.5], [RW - 0.5, 0.5]]) { const C = ENV.corner, p = kay.clone(C.file); p.position.set(x, 0, z); p.scale.set(C.s, C.h, C.s); add(p); }
   } else {
     const body: THREE.Matrix4[] = [], top: THREE.Matrix4[] = [], bars: THREE.Matrix4[] = [];
     for (let y = 0; y < RH; y++) for (let x = 0; x < RW; x++) {
@@ -152,9 +153,9 @@ export function buildRoomView(room: any, route: Route, kay: Kay | null): RoomVie
     else if (t === 5) for (let i = 0; i < 4; i++) spikes.push(mtx(x + 0.3 + (i % 2) * 0.4, 0, y + 0.3 + (i >> 1) * 0.4));
   }
   if (useK) {
-    const P: THREE.Matrix4[] = [], B: THREE.Matrix4[] = [], X: THREE.Matrix4[] = [];
-    for (const [x, y] of obs) { const r = hsh(seed, x, y, 8); (r < 0.6 ? P : r < 0.8 ? B : X).push(r < 0.6 ? mtx(x + 0.5, 0, y + 0.5, 0.6, 0.4, 0.6) : mtx(x + 0.5, 0, y + 0.5, 0.45, 0.45, 0.45, r * 6)); }
-    for (const im of [...kay.inst('pillar', P, true, true), ...kay.inst('barrel_large', B, true, true), ...kay.inst('box_small', X, true, true)]) add(im);
+    const sets: Record<string, THREE.Matrix4[]> = {};
+    for (const [x, y] of obs) { const r = hsh(seed, x, y, 8), o: any = pick(ENV.obstacle, r); (sets[o.file] ||= []).push(mtx(x + 0.5, 0, y + 0.5, o.s, o.h ?? o.s, o.s, o.h ? 0 : r * 6)); }
+    for (const f in sets) for (const im of kay.inst(f, sets[f], true, true)) add(im);
   } else {
     const P: THREE.Matrix4[] = [], PB: THREE.Matrix4[] = [];
     for (const [x, y] of obs) { const h = 1.6 + hsh(seed, x, y, 9) * 0.5; P.push(mtx(x + 0.5, h / 2, y + 0.5, 1, h, 1, hsh(seed, x, y) * 3)); PB.push(mtx(x + 0.5, 0.11, y + 0.5)); }
@@ -213,7 +214,7 @@ export function buildRoomView(room: any, route: Route, kay: Kay | null): RoomVie
   for (const [cx, cy] of corners) {
     let bx = cx, by = cy; if (!free(bx, by)) continue;
     const x = bx + 0.5, z = by + 0.5, bz = new THREE.Group(); bz.position.set(x, 0, z);
-    if (useK) { const c = kay.clone('column'); c.scale.setScalar(0.45); bz.add(c); }
+    if (useK) { const c = kay.clone(ENV.brazierBase.file); c.scale.setScalar(ENV.brazierBase.s); bz.add(c); }
     else for (let i = 0; i < 3; i++) { const l = new THREE.Mesh(G.leg, m.darkMetal); const a = i * 2.09; l.position.set(Math.cos(a) * 0.17, 0.3, Math.sin(a) * 0.17); l.rotation.set(Math.sin(a) * 0.25, 0, -Math.cos(a) * 0.25); l.castShadow = true; bz.add(l); }
     const top = useK ? 0.63 : 0.6;
     const bowl = new THREE.Mesh(G.bowl, m.metal); bowl.position.y = top + 0.11; bowl.castShadow = true; bz.add(bowl);
@@ -264,7 +265,7 @@ export function buildRoomView(room: any, route: Route, kay: Kay | null): RoomVie
 /** 寶箱：程序化（木＋金屬箍）或 KayKit chest。 */
 export function makeChest(kay: Kay | null, x: number, z: number, ry = 0) {
   const m = M; const grp = new THREE.Group(); grp.position.set(x, 0, z); grp.rotation.y = ry;
-  if (kay) { const c = kay.clone('chest'); c.scale.setScalar(0.42); grp.add(c); return grp; }
+  if (kay) { const c = kay.clone(ENV.chest.file); c.scale.setScalar(ENV.chest.s); grp.add(c); return grp; }
   const body = new THREE.Mesh(G.box, m.wood); body.scale.set(0.7, 0.38, 0.46); body.position.y = 0.19; body.castShadow = body.receiveShadow = true; grp.add(body);
   const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.23, 0.23, 0.7, 10, 1, false, 0, Math.PI).rotateZ(Math.PI / 2), m.wood); lid.position.y = 0.38; lid.castShadow = true; grp.add(lid);
   for (const ox of [-0.24, 0.24]) { const band = new THREE.Mesh(G.box, m.metal); band.scale.set(0.06, 0.4, 0.48); band.position.set(ox, 0.2, 0); grp.add(band); const b2 = new THREE.Mesh(new THREE.TorusGeometry(0.235, 0.025, 4, 10, Math.PI).rotateY(Math.PI / 2), m.metal); b2.position.set(ox, 0.38, 0); grp.add(b2); }

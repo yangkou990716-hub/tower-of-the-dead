@@ -3,8 +3,10 @@ import * as THREE from 'three/webgpu';
 import * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
 import { W } from '../sim/state';
 import { T } from '../sim/util';
+import { EN } from '../sim/data';
 import { mats, makeChest, GEO } from './room';
 import type { Kay } from './kaykit';
+import { PLAYER, ENEMIES, ENEMY_DEFAULT, type CharSpec, type AnimMap } from './manifest';
 
 const v3 = new THREE.Vector3();
 const std = (c: string, o: any = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.7, ...o });
@@ -46,27 +48,38 @@ function procPlayer(): PlayerView {
   };
 }
 
+// ---------- 骨架角色（玩家與敵人共用）：清單 → 模型、道具、動畫 ----------
+interface Rig { model: THREE.Object3D; once(role: keyof AnimMap, speed?: number): void; base(role: keyof AnimMap): void; stopAll(except?: keyof AnimMap): void; update(dt: number): void; bone(re: RegExp | string): THREE.Object3D | null; }
+function makeRig(kay: Kay, spec: CharSpec, scale: number): Rig {
+  const src = kay.gltf(spec.file), model = SkeletonUtils.clone(src.scene); model.scale.setScalar(scale);
+  const keep = new Set(spec.keep || []);
+  if (spec.hide) model.traverse((o: any) => { if ((o.isMesh || o.isSkinnedMesh) && spec.hide!.test(o.name) && !keep.has(o.name)) o.visible = false; });
+  const bone = (re: RegExp | string) => { let b: THREE.Object3D | null = null; model.traverse((o) => { if (!b && (typeof re === 'string' ? o.name === re : re.test(o.name))) b = o; }); return b as THREE.Object3D | null; };
+  for (const [slot, f] of Object.entries(spec.attach || {})) if (kay.has(f)) bone(slot)?.add(kay.clone(f));
+  const mixer = new THREE.AnimationMixer(model), A: Partial<Record<keyof AnimMap, THREE.AnimationAction>> = {};
+  for (const [role, name] of Object.entries(spec.anim) as [keyof AnimMap, string][]) { const c = name && THREE.AnimationClip.findByName(src.animations, name); if (c) A[role] = mixer.clipAction(c); }
+  for (const r of ['attack', 'hit', 'die', 'spawn', 'dodge', 'cast'] as (keyof AnimMap)[]) { const a = A[r]; if (a) { a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = r === 'die'; } }
+  mixer.addEventListener('finished', (e: any) => { if (e.action !== A.die) e.action.fadeOut(0.15); });
+  let cur: keyof AnimMap | '' = '';
+  return {
+    model, bone,
+    once(role, speed = 1) { const a = A[role]; if (!a) return; a.reset(); a.timeScale = speed; a.setEffectiveWeight(1); a.fadeIn(0.06).play(); },
+    base(role) { if (role === cur || !A[role]) return; if (cur) A[cur]?.fadeOut(0.18); A[role]!.reset().fadeIn(0.18).play(); cur = role; },
+    stopAll(except) { for (const k in A) if (k !== except) A[k as keyof AnimMap]!.fadeOut(0.1); },
+    update(dt) { mixer.update(dt); },
+  };
+}
+
 function kayPlayer(kay: Kay): PlayerView {
-  const m = mats(W.room.biome.pal), root = new THREE.Group();
-  const model = SkeletonUtils.clone(kay.knight.scene); model.scale.setScalar(0.48); root.add(model);
-  const keep = new Set(['1H_Sword', 'Round_Shield']);
-  model.traverse((o: any) => { if (o.isMesh || o.isSkinnedMesh) { const n = o.name; if (/Shield|Sword|Axe|Offhand/i.test(n) && !keep.has(n)) o.visible = false; o.castShadow = true; } });
-  const mixer = new THREE.AnimationMixer(model), clip = (n: string) => THREE.AnimationClip.findByName(kay.knight.animations, n);
-  const A: Record<string, THREE.AnimationAction> = {};
-  for (const [k, n] of [['idle', 'Idle'], ['run', 'Running_A'], ['atk', '1H_Melee_Attack_Slice_Diagonal'], ['dodge', 'Dodge_Forward'], ['hit', 'Hit_A'], ['die', 'Death_A']]) {
-    const c = clip(n); if (c) A[k] = mixer.clipAction(c);
-  }
-  for (const k of ['atk', 'dodge', 'hit', 'die']) if (A[k]) { A[k].setLoop(THREE.LoopOnce, 1); A[k].clampWhenFinished = k === 'die'; }
-  let base = 'idle'; A.idle?.play();
-  const playOnce = (k: string, speed = 1) => { const a = A[k]; if (!a) return; a.reset(); a.timeScale = speed; a.setEffectiveWeight(1); a.fadeIn(0.05).play(); };
-  mixer.addEventListener('finished', (e: any) => { if (e.action !== A.die) e.action.fadeOut(0.12); });
-  // 提燈掛在左手
+  const m = mats(W.room.biome.pal), root = new THREE.Group(), rig = makeRig(kay, PLAYER, PLAYER.scale); root.add(rig.model);
+  rig.base('idle');
+  // 提燈掛在手上（找不到骨頭就掛在身旁）
   const lantern = new THREE.Group();
   const cage = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.08, 0.16, 6, 1, true), m.darkMetal);
   const glow = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(5, 3.2, 1.4), toneMapped: false }));
   lantern.add(cage, glow);
-  let hand: THREE.Object3D | null = null; model.traverse((o) => { if (!hand && /hand.?slot.?l|handslot\.l|hand\.l|lowerarm\.l/i.test(o.name)) hand = o; });
-  if (hand) { (hand as THREE.Object3D).add(lantern); lantern.scale.setScalar(1 / 0.48); lantern.position.set(0, -0.35, 0); }
+  const hand = PLAYER.lanternBone ? rig.bone(PLAYER.lanternBone) : null;
+  if (hand) { hand.add(lantern); lantern.scale.setScalar(1 / PLAYER.scale); lantern.position.set(0, -0.35, 0); }
   else { lantern.position.set(-0.35, 0.75, 0.1); root.add(lantern); }
   const shadow = new THREE.Mesh(GEO.disc, m.shadow); shadow.position.y = 0.02; shadow.scale.setScalar(0.9); root.add(shadow); root.userData.blob = shadow;
   let dead = false;
@@ -74,18 +87,17 @@ function kayPlayer(kay: Kay): PlayerView {
     obj: root, lantern,
     update(t, dt, evs) {
       const p = W.p; root.position.set(p.x / T, 0, p.y / T); root.rotation.y = Math.PI / 2 - p.aim;
-      const mv = Math.hypot(p.vx || 0, p.vy || 0) > 5, want = mv ? 'run' : 'idle';
-      if (want !== base && A[want]) { A[base]?.fadeOut(0.15); A[want].reset().fadeIn(0.15).play(); base = want; }
+      rig.base(Math.hypot(p.vx || 0, p.vy || 0) > 5 ? 'move' : 'idle');
       for (const e of evs) {
-        if (e.k === 'hitfx' || e.k === 'pshoot') playOnce('atk', 1.8);
-        else if (e.k === 'dodge' || e.k === 'pdodge') playOnce('dodge', 1.6);
-        else if (e.k === 'phit') playOnce('hit', 1.4);
-        else if (e.k === 'pdeath') { playOnce('die'); dead = true; }
+        if (e.k === 'hitfx' || e.k === 'pshoot') rig.once('attack', 1.8);
+        else if (e.k === 'dodge' || e.k === 'pdodge') rig.once('dodge', 1.6);
+        else if (e.k === 'phit') rig.once('hit', 1.4);
+        else if (e.k === 'pdeath') { rig.stopAll('die'); rig.once('die'); dead = true; }
       }
-      if (dead && !p.dead) { dead = false; A.die?.stop(); }
-      mixer.update(dt);
+      if (dead && !p.dead) { dead = false; rig.stopAll(); rig.base('idle'); }
+      rig.update(dt);
     },
-    dispose() { mixer.stopAllAction(); },
+    dispose() {},
   };
 }
 export const makePlayer = (kay: Kay | null) => (kay ? kayPlayer(kay) : procPlayer());
@@ -137,46 +149,26 @@ function enemyMesh(e: any): THREE.Group {
 }
 
 // ---------- KayKit 骷髏敵人（CC0 Skeletons 包；共用骨架動畫） ----------
-const EK: Record<string, { c: string; r?: string; l?: string; atk: string; mv: string }> = {
-  slime: { c: 'Skeleton_Minion', r: 'Skeleton_Blade', atk: '1H_Melee_Attack_Chop', mv: 'Walking_D_Skeletons' },
-  hound: { c: 'Skeleton_Rogue', r: 'Skeleton_Blade', l: 'Skeleton_Blade', atk: '1H_Melee_Attack_Chop', mv: 'Running_A' },
-  spitter: { c: 'Skeleton_Mage', r: 'Skeleton_Staff', atk: 'Spellcast_Shoot', mv: 'Walking_D_Skeletons' },
-  guard: { c: 'Skeleton_Warrior', r: 'Skeleton_Blade', l: 'Skeleton_Shield_Large_A', atk: '1H_Melee_Attack_Chop', mv: 'Walking_D_Skeletons' },
-  matriarch: { c: 'Skeleton_Warrior', r: 'Skeleton_Axe', atk: '2H_Melee_Attack_Chop', mv: 'Walking_D_Skeletons' },
-};
 function kayEnemy(kay: Kay, e: any): THREE.Group {
-  const cfg = EK[e.id] || EK.slime, src = kay.chars[cfg.c], g = new THREE.Group();
-  const model = SkeletonUtils.clone(src.scene); g.add(model);
-  const bone = (n: string) => { let b: THREE.Object3D | null = null; model.traverse((o) => { if (!b && o.name === n) b = o; }); return b as THREE.Object3D | null; };
-  for (const [slot, w] of [['handslot.r', cfg.r], ['handslot.l', cfg.l]] as const) if (w) bone(slot)?.add(kay.clone(w));
-  const mixer = new THREE.AnimationMixer(model), A: Record<string, THREE.AnimationAction> = {};
-  for (const n of ['Idle_Combat', cfg.mv, cfg.atk, 'Hit_A', 'Death_A', 'Spawn_Ground_Skeletons']) { const c = THREE.AnimationClip.findByName(src.animations, n); if (c) A[n] = mixer.clipAction(c); }
-  for (const n of [cfg.atk, 'Hit_A', 'Death_A', 'Spawn_Ground_Skeletons']) if (A[n]) { A[n].setLoop(THREE.LoopOnce, 1); A[n].clampWhenFinished = n === 'Death_A'; }
-  let base = '', state = '', flash = 0;
-  const once = (n: string, sp = 1) => { const a = A[n]; if (!a) return; a.reset(); a.timeScale = sp; a.fadeIn(0.06).play(); };
-  mixer.addEventListener('finished', (ev: any) => { if (ev.action !== A.Death_A) ev.action.fadeOut(0.15); });
-  const setBase = (n: string) => { if (n === base || !A[n]) return; A[base]?.fadeOut(0.2); A[n].reset().fadeIn(0.2).play(); base = n; };
-  setBase('Idle_Combat'); if (e.state === 'spawn') once('Spawn_Ground_Skeletons', 1.6);
-  const sc = 0.46 * Math.sqrt(e.r / 12); model.scale.setScalar(sc);
+  const spec = ENEMIES[e.id] || ENEMIES[ENEMY_DEFAULT], g = new THREE.Group();
+  const sc = spec.scale * Math.sqrt(e.r / 12), rig = makeRig(kay, spec, sc); g.add(rig.model);
+  rig.base('idle'); if (e.state === 'spawn') rig.once('spawn', 1.6);
   const m = mats(W.room.biome.pal);
   const sh = new THREE.Mesh(GEO.disc, m.shadow); sh.position.y = 0.02; sh.scale.setScalar(sc * 2.2); g.add(sh); g.userData.blob = sh;
   const ring = new THREE.Mesh(RING, RING_MAT); ring.position.y = 0.035; ring.scale.setScalar(sc * 2.4); ring.visible = false; g.add(ring);
+  let state = '', flash = 0;
   g.userData.kay = {
     update(t: number, dt: number, en: any) {
-      if (en.state !== state) {
-        if (en.state === 'wind') once(cfg.atk, 1.1);
-        else if (en.state === 'stag') once('Hit_A', 1.3);
-        state = en.state;
-      }
-      if (en.flash > 0 && flash <= 0) once('Hit_A', 1.6);
+      if (en.state !== state) { if (en.state === 'wind') rig.once('attack', 1.1); else if (en.state === 'stag') rig.once('hit', 1.3); state = en.state; }
+      if (en.flash > 0 && flash <= 0) rig.once('hit', 1.6);
       flash = en.flash;
-      setBase(en.moving ? cfg.mv : 'Idle_Combat');
+      rig.base(en.moving ? 'move' : 'idle');
       ring.visible = en.state === 'wind'; if (ring.visible) ring.scale.setScalar(sc * 2.4 * (1 + Math.sin(t * 25) * 0.08));
-      model.scale.setScalar(sc * (en.flash > 0 ? 1.06 : 1));
-      mixer.update(dt);
+      rig.model.scale.setScalar(sc * (en.flash > 0 ? 1.06 : 1));
+      rig.update(dt);
     },
-    die() { ring.visible = false; for (const k in A) if (k !== 'Death_A') A[k].fadeOut(0.1); once('Death_A', 1.2); },
-    tick(dt: number) { mixer.update(dt); },
+    die() { ring.visible = false; rig.stopAll('die'); rig.once('die', 1.2); },
+    tick(dt: number) { rig.update(dt); },
   };
   return g;
 }
@@ -231,6 +223,13 @@ export class Actors {
       if (o.k === 'item') m.children[0].position.y = 0.4 + Math.sin(t * 3) * 0.08, m.rotation.y = t;
     }
     for (const [uid, m] of this.objs) if (!so.has(uid)) { this.root.remove(m); this.objs.delete(uid); }
+  }
+  /** 預先編譯用：每種敵人與物件各一個樣本（不碰 W）。 */
+  samples(): THREE.Group {
+    const g = new THREE.Group();
+    for (const id of Object.keys(EN)) { const d = (EN as any)[id], e = { uid: 0, id, d, r: d.r, x: 0, y: 0, a: 0, state: 'move', t: 1, flash: 0 }; g.add(this.kay ? kayEnemy(this.kay, e) : enemyMesh(e)); }
+    for (const k of ['chest', 'stairs', 'item', 'fire']) g.add(this.mkObj({ k }));
+    return g;
   }
   private mkObj(o: any): THREE.Object3D {
     const m = mats(W.room.biome.pal);

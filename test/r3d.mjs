@@ -21,5 +21,18 @@ ok('鍵盤可移動角色', x1 > x0 + 3, `x ${x0.toFixed(0)} → ${x1.toFixed(0)
 const aim = await p.evaluate(() => { const w = window.__totd.Input.toWorld(900, 300); return w; });
 ok('滑鼠 → 地面交點在房間內', aim.x > 0 && aim.x < 27 * 40 && aim.y > 0 && aim.y < 15 * 40, JSON.stringify(aim));
 await p.screenshot({ path: shot });
+// 換房：把玩家放到有門的那一側門口，往門走
+const dir = await p.evaluate(() => { const W = window.__totd.W, ds = Object.keys(W.room.def.doors); const d = ds[0]; const pos = { n: [13.5, 1.6], s: [13.5, 13.4], w: [1.6, 7.5], e: [25.4, 7.5] }[d]; W.p.x = pos[0] * 40; W.p.y = pos[1] * 40; return d; });
+const key = { n: 'KeyW', s: 'KeyS', w: 'KeyA', e: 'KeyD' }[dir], cur0 = await p.evaluate(() => window.__totd.W.run.cur);
+await p.keyboard.down(key); await p.waitForFunction((c) => window.__totd.W.run.cur !== c, cur0, { timeout: 60000 }).catch(() => {}); await p.keyboard.up(key);
+const moved = await p.evaluate((c) => window.__totd.W.run.cur !== c, cur0);
+await p.waitForFunction(() => { const r = window.__totd.App.renderer.s3; return r.curRoom === window.__totd.W.room && !r.busy; }, null, { timeout: 120000 }).catch(() => {});
+const re = await p.evaluate(() => { const r = window.__totd.App.renderer.s3; return { ok: r.curRoom === window.__totd.W.room, n: r.trans.n, last: Math.round(r.trans.last) }; });
+ok('走出房門 → 3D 重建新房間', moved && re.ok, JSON.stringify(re));
+// 切回 2D：網址 ?r=2d 會記住設定，Phaser 正常啟動
+await p.goto(URL.replace('?r=3d&api=webgl', '?r=2d')); await p.waitForFunction(() => window.__totd && window.__totd.App.state === 'title', null, { timeout: 30000 });
+ok('?r=2d 切回 Phaser 2D', await p.evaluate(() => window.__totd.App.renderer.kind === '2d' && !!window.__totd.App.game && window.__totd.App.game.scene.isActive('title')));
+await p.goto(URL.replace('?r=3d&api=webgl', '')); await p.waitForFunction(() => window.__totd && window.__totd.App.state === 'title', null, { timeout: 30000 });
+ok('不帶參數時沿用上次的選擇（2D）', await p.evaluate(() => window.__totd.App.renderer.kind === '2d'));
 ok('過程中沒有程式錯誤', errs.length === 0, errs.slice(0, 3).join(' | '));
 await b.close();
