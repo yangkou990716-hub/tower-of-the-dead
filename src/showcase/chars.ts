@@ -7,6 +7,7 @@ import { color, uniform, mix, float, uv, smoothstep, length } from 'three/tsl';
 import { rim } from './env';
 import { T } from '../sim/util';
 
+const MATS = new Map<string, THREE.Material>(), WHITE = new THREE.Color(1, 1, 1);
 const SRC: Record<string, { scene: THREE.Group; anims: Record<string, THREE.AnimationClip> }> = {};
 export async function loadChars(base: string, onP: (f: number) => void) {
   const L = new GLTFLoader(); L.setMeshoptDecoder(MeshoptDecoder);
@@ -27,7 +28,7 @@ const LOOK: Record<string, { m: string; h: number; rim: string; rimK: number; li
 
 export class Actor {
   root = new THREE.Group(); model: THREE.Object3D; mixer: THREE.AnimationMixer; cur: THREE.AnimationAction | null = null; curName = '';
-  flash = uniform(0); tint = uniform(new THREE.Color(1, 1, 1)); dead = 0; lantern: THREE.Object3D | null = null; clips: Record<string, THREE.AnimationClip>;
+  flash = { value: 0 }; tint = { value: new THREE.Color(1, 1, 1) }; dead = 0; lantern: THREE.Object3D | null = null; clips: Record<string, THREE.AnimationClip>;
   lock = 0; scale = 1; prevState = ''; prevT = 0;
   constructor(public kind: string) {
     const L = LOOK[kind] || LOOK.slime, src = SRC[L.m];
@@ -37,16 +38,18 @@ export class Actor {
     src.scene.traverse((o: any) => { if (o.isBone) bb.expandByPoint(o.getWorldPosition(v)); });
     const hh = Math.max(0.01, bb.max.y - bb.min.y);
     this.scale = L.h / hh; this.model.scale.setScalar(this.scale);
-    const cache = new Map<THREE.Material, THREE.Material>();
+    // 同一種角色共用材質（不會每生一隻怪就重新編譯著色器）；閃白與泛紅用逐物件 uniform
     this.model.traverse((o: any) => {
-      if (!o.isMesh) return; o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
-      const old = o.material as any; let m = cache.get(old);
+      if (!o.isMesh) return; o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; o.userData.act = this;
+      const old = o.material as any, key = kind + '|' + old.uuid; let m = MATS.get(key);
       if (!m) {
         const nm = new THREE.MeshStandardNodeMaterial({ roughness: Math.min(0.75, old.roughness ?? 0.6), metalness: Math.min(0.3, old.metalness ?? 0), map: old.map || null, side: old.side });
         const base: any = color(old.color ?? new THREE.Color(1, 1, 1));
-        nm.colorNode = base.mul(this.tint);
-        nm.emissiveNode = rim(L.rim, L.rimK).add(base.mul(L.lift)).add(color('#ffffff').mul(this.flash).mul(1.6));
-        m = nm; cache.set(old, m);
+        const fl = uniform(0).onObjectUpdate(({ object }: any) => object.userData.act?.flash.value ?? 0);
+        const ti = uniform(new THREE.Color(1, 1, 1)).onObjectUpdate(({ object }: any) => object.userData.act?.tint.value ?? WHITE);
+        nm.colorNode = base.mul(ti);
+        nm.emissiveNode = rim(L.rim, L.rimK).add(base.mul(L.lift)).add(color('#ffffff').mul(fl).mul(1.6));
+        m = nm; MATS.set(key, m);
       }
       o.material = m;
     });

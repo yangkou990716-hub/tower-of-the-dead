@@ -22,7 +22,7 @@ const BASE = new URL('./', location.href).href;
 type Tier = 'high' | 'bal' | 'perf';
 const TIERS = {
   high: { name: '高', pr: 2, shadow: 2048, lanternShadow: true, grass: 1, bloom: 0.5, particles: 1, cap: 60 },
-  bal: { name: '平衡', pr: 1.5, shadow: 1024, lanternShadow: false, grass: 0.55, bloom: 0.25, particles: 0.7, cap: 60 },
+  bal: { name: '平衡', pr: 1.5, shadow: 1024, lanternShadow: false, grass: 0.45, bloom: 0.25, particles: 0.7, cap: 60 },
   perf: { name: '效能', pr: 1, shadow: 512, lanternShadow: false, grass: 0.3, bloom: 0, particles: 0.4, cap: 30 },
 };
 let tier: Tier = (Q.get('q') as Tier) || (store.get('tier') as Tier) || 'bal'; if (!TIERS[tier]) tier = 'bal';
@@ -283,11 +283,11 @@ function hud() {
   if (b) ($('#boss i') as HTMLElement).style.transform = `scaleX(${Math.max(0, b.hp / b.mhp)})`;
   $('#btn-atk').classList.toggle('charge', p.charge > 0);
 }
-const S = { frames: 0, t: 0, fps: 0, sum: 0, n: 0, worst: 0, minF: 1e9, dc: 0, tri: 0, cpu: 0, t0: performance.now() };
+const S = { hitch: 0, frames: 0, t: 0, fps: 0, sum: 0, n: 0, worst: 0, minF: 1e9, dc: 0, tri: 0, cpu: 0, t0: performance.now() };
 function stats() {
   const be = (renderer.backend as any).isWebGPUBackend ? 'WebGPU' : 'WebGL 2', c = TIERS[tier];
   $('#stats').textContent = `${S.fps.toFixed(0)} fps  平均 ${(S.n ? 1000 / (S.sum / S.n) : 0).toFixed(1)}  最低 ${S.minF < 1e9 ? S.minF.toFixed(0) : '-'}\n` +
-    `幀 ${(S.n ? S.sum / S.n : 0).toFixed(1)} ms  最慢 ${S.worst.toFixed(0)} ms  CPU ${S.cpu.toFixed(1)}\n` +
+    `幀 ${(S.n ? S.sum / S.n : 0).toFixed(1)} ms  最慢 ${S.worst.toFixed(0)} ms  卡頓 ${S.hitch}  CPU ${S.cpu.toFixed(1)}\n` +
     `draw calls ${S.dc}  三角形 ${(S.tri / 1000).toFixed(0)}k  草 ${env.grass.count}\n${be}｜${c.name}｜${innerWidth}×${innerHeight}×${renderer.getPixelRatio()}`;
   document.querySelectorAll<HTMLElement>('[data-q]').forEach((e) => e.classList.toggle('on', e.dataset.q === tier));
   document.querySelectorAll<HTMLElement>('[data-api]').forEach((e) => e.classList.toggle('on', (e.dataset.api === 'webgl') === (be !== 'WebGPU')));
@@ -295,10 +295,10 @@ function stats() {
 function report() {
   const be = (renderer.backend as any).isWebGPUBackend ? 'WebGPU' : 'WebGL 2', s = (performance.now() - S.t0) / 1000;
   return [`亡者之塔 展示場景 回報`, `裝置：${navigator.userAgent}`, `後端：${be}｜畫質：${TIERS[tier].name}｜畫面 ${innerWidth}×${innerHeight}×${renderer.getPixelRatio()}`,
-    `測試 ${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}｜平均 ${(S.n ? 1000 / (S.sum / S.n) : 0).toFixed(1)} fps｜最低 1 秒 ${S.minF < 1e9 ? S.minF.toFixed(0) : '-'} fps｜最慢一幀 ${S.worst.toFixed(0)} ms`,
+    `測試 ${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}｜平均 ${(S.n ? 1000 / (S.sum / S.n) : 0).toFixed(1)} fps｜最低 1 秒 ${S.minF < 1e9 ? S.minF.toFixed(0) : '-'} fps｜最慢一幀 ${S.worst.toFixed(0)} ms｜卡頓（>100 ms）${S.hitch} 次`,
     `draw calls ${S.dc}｜三角形 ${(S.tri / 1000).toFixed(0)}k｜草 ${env.grass.count} 叢`].join('\n');
 }
-function resetStats() { Object.assign(S, { frames: 0, t: 0, sum: 0, n: 0, worst: 0, minF: 1e9, t0: performance.now() }); }
+function resetStats() { Object.assign(S, { hitch: 0, frames: 0, t: 0, sum: 0, n: 0, worst: 0, minF: 1e9, t0: performance.now() }); }
 
 // ---------------- 畫質 ----------------
 let env: Env, grassMax = 0;
@@ -329,7 +329,7 @@ function frame(now: number) {
   update(dt, t);
   renderer.info.reset(); if (Q.has('raw')) renderer.render(scene, camera); else pipeline.render();
   S.dc = renderer.info.render.drawCalls; S.tri = renderer.info.render.triangles; S.cpu = performance.now() - c0;
-  S.frames++; S.t += real; S.sum += real; S.n++; S.worst = Math.max(S.worst, real);
+  S.frames++; S.t += real; S.sum += real; S.n++; S.worst = Math.max(S.worst, real); if (real > 100 && performance.now() - S.t0 > 3000) S.hitch++;
   if (S.t >= 1000) { S.fps = S.frames * 1000 / S.t; if (performance.now() - S.t0 > 3000) S.minF = Math.min(S.minF, S.fps); S.frames = 0; S.t = 0; stats(); }
   hud();
 }
@@ -369,12 +369,20 @@ async function main() {
   initSim();
   grassMax = 14000;
   env = buildEnv(scene, grassMax, solidAt);
-  FX.initFx();
+  FX.initFx(); FX.initArcs();
   hero = new Actor('player'); scene.add(hero.root);
   applyTier();
   bar.style.width = '85%'; lp.textContent = '編譯著色器…';
   updCamera(1);
+  // 預熱：把會在戰鬥中才出現的東西（Boss、小怪、刀光、光環、彈幕、提示圈）先畫一次，避免第一次出現時卡頓
+  const tmp = [new Actor('matriarch'), new Actor('slime')]; tmp.forEach((a, i) => { a.root.position.set(CX + i * 2, 0, CZ); scene.add(a.root); });
+  FX.slash(CX, CZ, 0, 1.5, 2, true, '#ffcf6a'); FX.slash(CX, CZ, 1, 1.5, 2, false, '#ff7fd0'); for (let i = 0; i < 3; i++) FX.ring(CX, CZ, 2, '#ffffff');
+  FX.teleBegin(); FX.teleDraw('sector', CX, CZ, 0, 2, 1.5, 0.5, true); FX.teleDraw('circle', CX, CZ, 0, 2, 0, 0.5, false); FX.teleDraw('rect', CX, CZ, 0, 4, 0.5, 0.5, true); FX.teleEnd();
+  FX.shotsBegin(); for (const c of ['#ff9ad8', '#ffb86b', '#e6ffb8', '#ffd65a', '#ff8aa0', '#a4e86a']) FX.shotDraw(CX, CZ, 0.2, c); FX.shotsEnd();
+  FX.emit(20, { x: CX, y: 1, z: CZ, c: '#fff', life: [0.1, 0.2] }); FX.updFx(0.016);
   try { await renderer.compileAsync(scene, camera); } catch (e) { console.warn(e); }
+  pipeline.render(); await new Promise((r) => setTimeout(r, 50)); pipeline.render();
+  tmp.forEach((a) => scene.remove(a.root)); FX.updArcs(10); FX.teleBegin(); FX.teleEnd(); FX.shotsBegin(); FX.shotsEnd();
   bar.style.width = '100%';
   $('#boot').style.display = 'none';
   resetStats(); stats();

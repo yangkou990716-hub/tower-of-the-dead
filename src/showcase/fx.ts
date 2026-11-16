@@ -1,6 +1,6 @@
 // 特效：GPU 實例化粒子（CPU 模擬）、地面出招提示、投射物、揮砍弧。
 import * as THREE from 'three/webgpu';
-import { instancedBufferAttribute, uv, float, vec4, color, uniform, smoothstep } from 'three/tsl';
+import { instancedBufferAttribute, uv, float, vec4, color, uniform, smoothstep, mix } from 'three/tsl';
 export const FXC = { scene: null as any as THREE.Scene, particles: 1 };
 const G = { get scene() { return FXC.scene; } };
 
@@ -122,31 +122,49 @@ function arcGeo(r0: number, r1: number, arc: number) {
   for (let i = 0; i < N; i++) { const k = i * 2; idx.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2)); g.setIndex(idx); return g;
 }
-export function slash(x: number, z: number, ang: number, rng: number, arc: number, heavy: boolean, c = '#fff2d0', side = 1, y = 0.75) {
-  const g = arcGeo(rng * 0.3, rng, arc);
+// 刀光與光環都用物件池：材質只建一次（不在戰鬥中編譯著色器）
+interface ArcM { mesh: THREE.Mesh; u: any; c: any; side: any; k: any; busy: boolean; }
+const slashPool: ArcM[] = [], ringPool: ArcM[] = [];
+function mkSlash(): ArcM {
   const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-  const u = uniform(1), along = side > 0 ? uv().x : float(1).sub(uv().x);
-  const sweep = smoothstep(float(1).sub(u).sub(0.15), float(1).sub(u).add(0.25), along); // 刀光掃過
+  const u = uniform(1), c = uniform(new THREE.Color(1, 1, 1)), side = uniform(1), k = uniform(1);
+  const along = mix(float(1).sub(uv().x), uv().x, side);
+  const sweep = smoothstep(float(1).sub(u).sub(0.15), float(1).sub(u).add(0.25), along);
   const edge = smoothstep(0.0, 0.85, uv().y).mul(smoothstep(1.0, 0.92, uv().y));
-  m.colorNode = color(c).mul(heavy ? 3.2 : 2.4).add(color('#ffffff').mul(smoothstep(0.75, 0.98, uv().y)).mul(2));
-  m.opacityNode = sweep.mul(edge).mul(u).mul(heavy ? 1 : 0.85);
-  (m as any)._u = u;
-  const mesh = new THREE.Mesh(g, m); mesh.position.set(x, y, z); mesh.rotation.y = -ang; mesh.rotation.z = (side > 0 ? 1 : -1) * 0.12; mesh.renderOrder = 8;
-  G.scene.add(mesh); arcs.push({ m: mesh, t: 0, d: heavy ? 0.26 : 0.18 });
+  m.colorNode = (c as any).mul(k).add(color('#ffffff').mul(smoothstep(0.75, 0.98, uv().y)).mul(2));
+  m.opacityNode = sweep.mul(edge).mul(u);
+  const mesh = new THREE.Mesh(arcGeo(0.3, 1, 2), m); mesh.renderOrder = 8; mesh.visible = false; G.scene.add(mesh);
+  const a = { mesh, u, c, side, k, busy: false }; slashPool.push(a); return a;
+}
+function mkRing(): ArcM {
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+  const u = uniform(1), c = uniform(new THREE.Color(1, 1, 1));
+  m.colorNode = (c as any).mul(2.5); m.opacityNode = u;
+  const mesh = new THREE.Mesh(RING_G, m); mesh.renderOrder = 8; mesh.visible = false; G.scene.add(mesh);
+  const a = { mesh, u, c, side: null, k: null, busy: false }; ringPool.push(a); return a;
+}
+const RING_G = new THREE.RingGeometry(0.85, 1, 40).rotateX(-Math.PI / 2);
+export function initArcs() { for (let i = 0; i < 8; i++) mkSlash(); for (let i = 0; i < 16; i++) mkRing(); }
+const free = (p: ArcM[], mk: () => ArcM) => p.find((a) => !a.busy) || mk();
+export function slash(x: number, z: number, ang: number, rng: number, arc: number, heavy: boolean, c = '#fff2d0', side = 1, y = 0.75) {
+  const a = free(slashPool, mkSlash); a.busy = true;
+  a.mesh.geometry.dispose(); a.mesh.geometry = arcGeo(rng * 0.3, rng, arc);
+  a.c.value.set(c); a.k.value = heavy ? 3.2 : 2.4; a.side.value = side > 0 ? 1 : 0; a.u.value = 1;
+  a.mesh.position.set(x, y, z); a.mesh.rotation.set(0, -ang, (side > 0 ? 1 : -1) * 0.12); a.mesh.scale.setScalar(1); a.mesh.visible = true;
+  arcs.push({ m: a.mesh, t: 0, d: heavy ? 0.26 : 0.18, a } as any);
 }
 /** 爆炸／彈反的地面光環 */
 export function ring(x: number, z: number, r: number, c: string, d = 0.35) {
-  const g = new THREE.RingGeometry(0.85, 1, 40); g.rotateX(-Math.PI / 2);
-  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
-  const u = uniform(1); m.colorNode = color(c).mul(2.5); m.opacityNode = u; (m as any)._u = u;
-  const mesh = new THREE.Mesh(g, m); mesh.position.set(x, 0.1, z); mesh.userData.keep = true; mesh.userData.ring = r; mesh.renderOrder = 8;
-  G.scene.add(mesh); arcs.push({ m: mesh, t: 0, d });
+  const a = free(ringPool, mkRing); a.busy = true; a.c.value.set(c); a.u.value = 1;
+  a.mesh.position.set(x, 0.1, z); a.mesh.userData.ring = r; a.mesh.visible = true;
+  arcs.push({ m: a.mesh, t: 0, d, a } as any);
 }
 export function updArcs(dt: number) {
   for (let i = arcs.length - 1; i >= 0; i--) {
     const a = arcs[i]; a.t += dt; const k = a.t / a.d;
-    if (k >= 1) { G.scene.remove(a.m); a.m.geometry.dispose(); (a.m.material as any).dispose(); arcs.splice(i, 1); continue; }
-    ((a.m.material as any)._u).value = 1 - k;
+    const P = (a as any).a as ArcM;
+    if (k >= 1) { a.m.visible = false; P.busy = false; arcs.splice(i, 1); continue; }
+    P.u.value = 1 - k;
     if (a.m.userData.ring) a.m.scale.setScalar(a.m.userData.ring * (0.3 + 0.7 * Math.sqrt(k)));
     else a.m.scale.setScalar(1 + k * 0.12);
   }
