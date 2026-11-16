@@ -83,7 +83,7 @@ export function bakeFx(scene: Phaser.Scene) {
   bakeOne(scene, 'arrow', 36, 12, 26, 6, (x) => { line(x, -24, 0, 6, 0, 1.6, '#d8c9a8'); x.fillStyle = '#f4f0e4'; poly(x, [9, 0, 2, -3.2, 2, 3.2]); x.fillStyle = '#c9534a'; poly(x, [-24, 0, -19, -3, -16, 0, -19, 3]); });
   // 傷害數字用的點陣字
   const chars = '0123456789+-!', cw = 15, ch = 28; const [c, x] = mkCanvas(cw * chars.length, ch);
-  x.font = '900 23px "TowerSerif","Noto Serif TC","Songti TC",serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineJoin = 'round';
+  x.font = '900 23px "TowerKai","Noto Serif TC","Songti TC",serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineJoin = 'round';
   for (let i = 0; i < chars.length; i++) { x.strokeStyle = 'rgba(10,12,16,.9)'; x.lineWidth = 5; x.strokeText(chars[i], i * cw + cw / 2, ch / 2 + 1); x.fillStyle = '#fff'; x.fillText(chars[i], i * cw + cw / 2, ch / 2 + 1); }
   addCanvasTex(scene, 'numfont', c);
   scene.cache.bitmapFont.add('num', Phaser.GameObjects.RetroFont.Parse(scene, { image: 'numfont', width: cw * BS, height: ch * BS, chars, charsPerRow: chars.length, 'offset.x': 0, 'offset.y': 0, 'spacing.x': 0, 'spacing.y': 0, lineSpacing: 0 } as any));

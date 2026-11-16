@@ -71,7 +71,7 @@ kbd { display: inline-grid; place-items: center; min-width: 1.7em; height: 1.55e
 .hotk > span .ic { width: 1.5em; height: 1.5em; color: var(--text); }
 #hud .hot.nohint .hotk > span { display: none; }
 #hud .wasd { position: absolute; left: calc(var(--sal) + 2.4 * var(--u)); bottom: calc(var(--sab) + 2.4 * var(--u)); display: grid; grid-template-columns: repeat(3, auto) 1fr; gap: .16em; align-items: center; font-size: .78em; opacity: .85; }
-#hud .wasd kbd:nth-child(1) { grid-column: 2; } #hud .wasd span { grid-row: 2; grid-column: 4; margin-left: .5em; color: var(--dim); }
+#hud .wasd kbd:nth-child(1) { grid-column: 2; grid-row: 1; } #hud .wasd kbd:nth-child(2) { grid-column: 1; grid-row: 2; } #hud .wasd kbd:nth-child(3) { grid-column: 2; grid-row: 2; } #hud .wasd kbd:nth-child(4) { grid-column: 3; grid-row: 2; } #hud .wasd span { grid-row: 2; grid-column: 4; margin-left: .5em; color: var(--dim); }
 #hud .prompt { position: absolute; left: 50%; bottom: calc(var(--sab) + 17 * var(--u)); transform: translateX(-50%); padding: .35em 1em; background: rgba(12, 15, 20, .86); border: 1px solid var(--line); border-radius: 99px; white-space: nowrap; display: flex; align-items: center; gap: .5em; }
 #hud .banner { position: absolute; left: 0; right: 0; top: 22%; text-align: center; animation: banner 3.4s forwards; }
 #hud .banner b { display: block; font-size: 2.7em; letter-spacing: .4em; margin-left: .4em; text-shadow: 0 0 .5em rgba(242, 182, 90, .5), 0 2px 4px #000; }

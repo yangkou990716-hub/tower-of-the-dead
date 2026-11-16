@@ -10,6 +10,8 @@ import { Input } from '../platform/input';
 import { Lifecycle } from '../platform/lifecycle';
 import { PWA } from '../platform/pwa';
 import { View } from '../platform/view';
+import { Haptics } from '../platform/haptics';
+import { Tutorial } from '../ui/tutorial';
 import { Bus } from './bus';
 import { Hud, itemName } from '../ui/hud';
 import * as UI from '../ui/screens';
@@ -46,16 +48,30 @@ export const App = {
   bindTouch() {
     const t = document.getElementById('touch')!;
     Input.stick(t.querySelector('.zl') as HTMLElement, (x, y) => { Input.mv.x = x; Input.mv.y = y; });
-    Input.stick(t.querySelector('.zr') as HTMLElement, (x, y, on) => { const m = Math.hypot(x, y); Input.aimV.on = on && m > 0.28; if (m > 0.12) { Input.aimV.x = x / m; Input.aimV.y = y / m; } });
-    t.querySelectorAll<HTMLElement>('[data-b]').forEach((b) => Input.button(b, b.getAttribute('data-b')!));
-    document.querySelectorAll<HTMLElement>('#hud .sys button').forEach((b) => b.addEventListener('click', () => { Snd.init(); Input.press(b.getAttribute('data-act')!); }));
+    Input.attackPad(t.querySelector('.atk') as HTMLElement);
+    t.querySelectorAll<HTMLElement>('[data-b]').forEach((b) => { const n = b.getAttribute('data-b')!; if (n !== 'attack') Input.button(b, n); });
+    document.querySelectorAll<HTMLElement>('#hud .sys button').forEach((b) => b.addEventListener('click', () => { Snd.init(); Haptics.fire('tap'); Input.press(b.getAttribute('data-act')!); }));
     // 第一次碰到螢幕就切到觸控介面
-    addEventListener('touchstart', () => Input.setTouch(true), { passive: true, once: false });
+    addEventListener('touchstart', () => Input.setTouch(true), { passive: true });
+    Input.onMode = () => { if (Tutorial.active) Tutorial.render(); };
+  },
+  /** 模擬事件 → 觸覺回饋 */
+  haptic(e: any) {
+    switch (e.k) {
+      case 'hitfx': if (!e.blocked) Haptics.fire(e.crit ? 'crit' : e.heavy ? 'heavy' : 'hit'); break;
+      case 'die': Haptics.fire(e.boss ? 'boss' : 'kill'); break;
+      case 'parry': Haptics.fire('parry'); break;
+      case 'pdodge': Haptics.fire('pdodge'); break;
+      case 'phit': case 'pdeath': Haptics.fire('hurt'); break;
+      case 'boss': Haptics.fire('boss'); break;
+      case 'exhaust': Haptics.fire('deny'); break;
+    }
   },
 
   /** 模擬事件 → 介面 */
   wire() {
     Bus.on('frame', (dt: number) => this.frame(dt));
+    Bus.on('ev', (e: any) => { Tutorial.onEv(e); this.haptic(e); });
     Bus.on('hud', (dt: number) => Hud.update(dt));
     Bus.on('room', () => { Hud.fade(); Hud.minimap(); Hud.boss(W.boss); });
     Bus.on('clear', () => { Hud.minimap(); this.save(); });
@@ -77,6 +93,7 @@ export const App = {
   frame(dt: number) {
     if (Input.take('pause')) { if (!UI.closeTop() && this.state === 'play' && !W.over) UI.pauseSheet(); }
     if (this.state !== 'play') { Input.take('map'); Input.take('inv'); return; }
+    Tutorial.frame(dt);
     if (Input.take('map') && !W.over) { if (!UI.closeTop()) UI.mapSheet(); }
     if (Input.take('inv') && !W.over) { if (!UI.closeTop()) UI.bagSheet(); }
     if (W.dirty) { W.dirty = false; this.save(); }
@@ -84,14 +101,14 @@ export const App = {
   },
   save(now = false) { this.saveT = 0; const s = Saves.cur; if (!s) return; if (this.state === 'play' && W.run && !W.over) s.run = W.run; s.hub.last = Date.now(); if (now) Saves.flush(); else Saves.queue(); },
 
-  toTitle() { UI.closeAll(); this.save(true); Hud.show(false); Input.enabled = false; this.state = 'title'; Saves.cur = null; W.run = null; const g = this.game!; if (g.scene.isActive('game')) g.scene.stop('game'); if (!g.scene.isActive('title')) g.scene.start('title'); UI.showTitle(); },
+  toTitle() { Tutorial.stop(false); UI.closeAll(); this.save(true); Hud.show(false); Input.enabled = false; this.state = 'title'; Saves.cur = null; W.run = null; const g = this.game!; if (g.scene.isActive('game')) g.scene.stop('game'); if (!g.scene.isActive('title')) g.scene.start('title'); UI.showTitle(); },
   async enterSlot(id: number) {
     const s = await Saves.select(id, true); if (!s) return; W.meta = s.meta; DB.requestPersist();
-    UI.hideTitle(); this.toCamp();
-    if (!s.meta.tut) { s.meta.tut = 1; Saves.queue(); UI.howTo(); }
+    UI.hideTitle();
+    if (!s.meta.tut) { s.meta.tut = 1; Saves.queue(); UI.storySheet(() => this.toCamp()); } else this.toCamp();
   },
   toCamp() {
-    UI.closeAll(); this.save(true); Hud.show(false); Input.enabled = false; this.state = 'title'; W.run = null; W.over = null;
+    Tutorial.stop(false); UI.closeAll(); this.save(true); Hud.show(false); Input.enabled = false; this.state = 'title'; W.run = null; W.over = null;
     const g = this.game!; if (g.scene.isActive('game')) g.scene.stop('game'); if (!g.scene.isActive('title')) g.scene.start('title');
     UI.hideTitle(); UI.campSheet();
   },
@@ -101,6 +118,7 @@ export const App = {
     UI.closeAll(); UI.hideTitle(); startRun(run); Saves.cur!.run = W.run; this.state = 'play'; Input.clear(); Input.enabled = true;
     const g = this.game!; g.scene.stop('title'); g.scene.start('game'); Hud.show(true);
     const b = biomeOf(run.floor); Hud.banner(b.n, floorName(run.floor) + '　' + b.sub); this.save(true);
+    if (fresh && (Saves.cur!.meta.tut || 0) < 2) setTimeout(() => { if (this.state === 'play' && W.p) Tutorial.start(); }, 3200);
   },
   /** 在營地放棄未完的遠征：直接結算帶回魂晶。 */
   abandon() {
@@ -109,5 +127,5 @@ export const App = {
     m.shards += sh; m.stats.runs++; m.stats.bestFloor = Math.max(m.stats.bestFloor, s.run.floor); m.stats.playtime += s.run.time; s.run = null; W.run = null;
     Saves.flush(); this.toCamp(); Hud.toast('帶回魂晶 +' + sh, 'good');
   },
-  onOver(e: any) { const s = Saves.cur!; s.run = null; Saves.flush(); Input.enabled = false; setTimeout(() => UI.resultSheet(e, () => this.toCamp()), 600); },
+  onOver(e: any) { Tutorial.stop(false); const s = Saves.cur!; s.run = null; Saves.flush(); Input.enabled = false; setTimeout(() => UI.resultSheet(e, () => this.toCamp()), 600); },
 };

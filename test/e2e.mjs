@@ -22,7 +22,7 @@ async function suite(label, ctxOpt, touch) {
   // 3) 斷網後重新啟動
   await ctx.setOffline(true); await p.reload(); let offlineBoot = true; try { await ready(); } catch { offlineBoot = false; }
   ok('斷網後仍可啟動（從快取載入）', offlineBoot);
-  const fontOk = await p.evaluate(async () => { await document.fonts.ready; return document.fonts.check('900 20px TowerSerif', '亡者之塔'); });
+  const fontOk = await p.evaluate(async () => { await document.fonts.ready; return document.fonts.check('700 20px TowerKai', '亡者之塔'); });
   ok('斷網時內建字型可用（未依賴 CDN）', fontOk);
   // 4) 斷網讀檔、接續遊玩、再存檔
   const after = await p.evaluate(async () => { const t = window.__totd; const s = t.Saves.slots[0]; if (!s || !s.run) return null; await t.App.enterSlot(1); t.UI.closeAll(); t.App.resumeRun(); const W = t.W; return { seed: W.run.seed, floor: W.run.floor, cur: W.run.cur, gold: W.run.gold, relic: W.run.relics.includes('heart'), shards: W.meta.shards }; });
