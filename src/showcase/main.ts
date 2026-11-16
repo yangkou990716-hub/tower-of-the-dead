@@ -86,6 +86,7 @@ function initSim() {
 }
 let bossT = 0;
 function spawnBoss() {
+  frameEv('Boss重生');
   const b = mkEnemy('matriarch', CX * T, (CZ - 1.8) * T, { t: 1.8 }); W.boss = b;
   FX.ring(CX, CZ - 1.8, 4, '#ff7fd0', 0.9); FX.emit(60, { x: CX, y: 0.3, z: CZ - 1.8, c: '#ffb0e0', spd: [1, 5], up: 4, life: [0.6, 1.4], s: [0.3, 0], drag: 1.5, jit: 1.5 });
   toast('蘑菇王 甦醒了');
@@ -168,11 +169,19 @@ function enemyAnim(a: Actor, e: any) {
     default: if (e.moving) a.play(king && e.phase > 0 ? 'Run' : 'Walk', { ts: king ? 1.1 : 1.4, fade: 0.2 }); else a.play('Idle', { fade: 0.25 });
   }
 }
+// 角色物件池：Boss 與小怪死後保留下來重用（避免重生時重新複製模型、骨架、動畫造成一幀尖峰）
+const POOL: Record<string, Actor[]> = { matriarch: [], slime: [] };
+function getActor(kind: string) {
+  const a = POOL[kind].pop();
+  if (a) { a.root.visible = true; a.root.position.y = 0; a.root.scale.setScalar(1); a.flash.value = 0; a.dead = 0; a.mixer.stopAllAction(); a.cur = null; a.curName = ''; a.prevState = ''; frameEv('重用:' + kind); return a; }
+  const n = new Actor(kind); if (OPT.on && kind === 'slime') n.model.traverse((o: any) => { if (o.isMesh) o.castShadow = false; }); scene.add(n.root); frameEv('新建:' + kind); return n;
+}
+function releaseActor(a: Actor) { a.root.visible = false; a.mixer.stopAllAction(); POOL[a.kind]?.push(a); }
 function syncEnemies(dt: number) {
   const seen = new Set<number>();
   for (const e of W.ents) {
     let a = actors.get(e.uid);
-    if (!a) { a = new Actor(e.id === 'matriarch' ? 'matriarch' : 'slime'); if (OPT.on && a.kind === 'slime') a.model.traverse((o: any) => { if (o.isMesh) o.castShadow = false; }); scene.add(a.root); actors.set(e.uid, a); }
+    if (!a) { a = getActor(e.id === 'matriarch' ? 'matriarch' : 'slime'); actors.set(e.uid, a); }
     seen.add(e.uid); a.set(e.x, e.y, e.a); enemyAnim(a, e);
     // 前搖時身體微微脹大、泛紅：出招提示
     const wind = e.state === 'wind' ? 1 - e.t / e.tw : 0;
@@ -180,7 +189,7 @@ function syncEnemies(dt: number) {
     a.flash.value = Math.max(0, a.flash.value - dt * 9);
   }
   for (const [uid, a] of actors) if (!seen.has(uid)) { actors.delete(uid); a.play('Death', { once: true, hold: true, fade: 0.05 }); a.dead = 2.2; dying.push(a); }
-  for (let i = dying.length - 1; i >= 0; i--) { const a = dying[i]; a.dead -= dt; a.flash.value = Math.max(0, a.flash.value - dt * 6); if (a.dead < 0.7) a.root.position.y -= dt * 1.2; if (a.dead <= 0) { scene.remove(a.root); dying.splice(i, 1); } }
+  for (let i = dying.length - 1; i >= 0; i--) { const a = dying[i]; a.dead -= dt; a.flash.value = Math.max(0, a.flash.value - dt * 6); if (a.dead < 0.7) a.root.position.y -= dt * 1.2; if (a.dead <= 0) { releaseActor(a); dying.splice(i, 1); } }
   for (const a of [...actors.values(), ...dying]) a.mixer.update(dt * (W.slow > 0 ? 0.3 : 1));
 }
 const nearestActor = (x: number, y: number) => { let b: Actor | undefined, bd = 1e9; for (const e of W.ents) { const d = Math.hypot(e.x - x, e.y - y); if (d < bd) { bd = d; b = actors.get(e.uid); } } return b; };
@@ -207,7 +216,9 @@ function drawTele() {
 let shake = 0, slowFlash = 0;
 const kick = new THREE.Vector2();
 const px = (v: number) => v / T;
+const NOTE = new Set(['die', 'spawn', 'boss', 'phase', 'pdeath', 'revive', 'phit', 'parry', 'pdodge', 'boom', 'bossdie', 'stag']);
 function onEv(e: any) {
+  if (NOTE.has(e.k)) frameEv(e.k);
   switch (e.k) {
     case 'snd': Snd.play(e.n); break;
     case 'swing': {
@@ -355,13 +366,15 @@ function applyOpt() {
   for (const a of actors.values()) if (a.kind === 'slime') a.model.traverse((o: any) => { if (o.isMesh) o.castShadow = !OPT.on; });
   store.set('opt', OPT.on ? '1' : '0');
 }
-interface Sec { fps: number; worst: number; upd: number; sub: number; gpu: number; dc: number; tri: number; ents: number; shots: number; parts: number; tele: number; haz: number; evs: string[]; stage: string }
+interface Sec { fps: number; worst: number; upd: number; sub: number; gpu: number; dc: number; tri: number; ents: number; shots: number; parts: number; tele: number; haz: number; evs: string[]; spikes: string[]; stage: string }
 const secs: Sec[] = [];
-const newAcc = () => ({ n: 0, ms: 0, worst: 0, upd: 0, sub: 0, gpu: 0, gn: 0, dc: 0, tri: 0, ents: 0, shots: 0, parts: 0, tele: 0, haz: 0, evs: new Set<string>() });
+const newAcc = () => ({ n: 0, ms: 0, worst: 0, upd: 0, sub: 0, gpu: 0, gn: 0, dc: 0, tri: 0, ents: 0, shots: 0, parts: 0, tele: 0, haz: 0, evs: new Set<string>(), spikes: [] as string[] });
 let acc = newAcc();
 let lastBossAtk = '';
 function sample(real: number, upd: number, sub: number) {
   const f = FX.fxStats();
+  if (real > 33 && acc.spikes.length < 6) acc.spikes.push(`${real.toFixed(0)}ms(更新${upd.toFixed(1)}/提交${sub.toFixed(1)}${frameEvs.length ? ':' + frameEvs.join('+') : ''})`);
+  frameEvs = [];
   acc.n++; acc.ms += real; acc.worst = Math.max(acc.worst, real); acc.upd += upd; acc.sub += sub;
   if (gpuMs > 0) { acc.gpu += gpuMs; acc.gn++; }
   acc.dc = Math.max(acc.dc, S.dc); acc.tri = Math.max(acc.tri, S.tri); acc.ents = Math.max(acc.ents, W.ents.length); acc.shots = Math.max(acc.shots, W.shots.length);
@@ -369,14 +382,16 @@ function sample(real: number, upd: number, sub: number) {
   const b = W.boss && !W.boss.dead ? W.boss : null, ba = b && (b.state === 'wind' || b.state === 'act') ? (b.atk?.t || '') : '';
   if (ba && ba !== lastBossAtk) acc.evs.add('Boss:' + ba); lastBossAtk = ba;
   if (acc.ms >= 1000) {
-    const sec: Sec = { fps: acc.n * 1000 / acc.ms, worst: acc.worst, upd: acc.upd / acc.n, sub: acc.sub / acc.n, gpu: acc.gn ? acc.gpu / acc.gn : -1, dc: acc.dc, tri: acc.tri, ents: acc.ents, shots: acc.shots, parts: acc.parts, tele: acc.tele, haz: acc.haz, evs: [...acc.evs], stage: bench ? BENCH[bench.i].n : performance.now() < quietUntil ? '測試後' : '' };
+    const sec: Sec = { fps: acc.n * 1000 / acc.ms, worst: acc.worst, upd: acc.upd / acc.n, sub: acc.sub / acc.n, gpu: acc.gn ? acc.gpu / acc.gn : -1, dc: acc.dc, tri: acc.tri, ents: acc.ents, shots: acc.shots, parts: acc.parts, tele: acc.tele, haz: acc.haz, evs: [...acc.evs], spikes: acc.spikes, stage: bench ? BENCH[bench.i].n : performance.now() < quietUntil ? '測試後' : '' };
     if (performance.now() - S.t0 > 3000) { secs.push(sec); if (secs.length > 600) secs.shift(); }
     if (bench && bench.t > 1.5) bench.secs.push(sec);
     acc = newAcc();
   }
 }
 const markEv = (k: string) => { acc.evs.add(k); };
-const fmtSec = (x: Sec) => `${x.fps.toFixed(0)} fps｜最慢 ${x.worst.toFixed(0)} ms｜CPU 更新 ${x.upd.toFixed(1)}＋提交 ${x.sub.toFixed(1)} ms｜GPU ${x.gpu > 0 ? x.gpu.toFixed(1) + ' ms' : '不可得'}｜DC ${x.dc}｜△ ${(x.tri / 1000).toFixed(0)}k｜敵 ${x.ents}｜彈 ${x.shots}｜粒子 ${x.parts}｜提示圈 ${x.tele}｜危害 ${x.haz}${x.evs.length ? '｜' + x.evs.join(',') : ''}`;
+let frameEvs: string[] = [];
+function frameEv(k: string) { frameEvs.push(k); }
+const fmtSec = (x: Sec) => `${x.fps.toFixed(0)} fps｜最慢 ${x.worst.toFixed(0)} ms｜CPU 更新 ${x.upd.toFixed(1)}＋提交 ${x.sub.toFixed(1)} ms｜GPU ${x.gpu > 0 ? x.gpu.toFixed(1) + ' ms' : '不可得'}｜DC ${x.dc}｜△ ${(x.tri / 1000).toFixed(0)}k｜敵 ${x.ents}｜彈 ${x.shots}｜粒子 ${x.parts}｜提示圈 ${x.tele}｜危害 ${x.haz}${x.evs.length ? '｜' + x.evs.join(',') : ''}${x.spikes.length ? '｜長幀 ' + x.spikes.join(' ') : ''}`;
 const isPeak = (x: Sec) => x.shots >= 8 || x.ents >= 3 || x.parts >= 300 || x.tele >= 4;
 function avgOf(xs: Sec[]) {
   if (!xs.length) return null;
@@ -477,7 +492,7 @@ function update(dt: number, t: number) {
   simT = t;
   // 模擬
   step(dt, () => { W.in = buildInput(); });
-  if (W.over || W.p.dead) { respawnT += dt; if (respawnT > 1.8) { respawnT = 0; W.over = null; const run = W.run!; const p0 = W.p; W.p = mkPlayer(); W.p.x = p0.x; W.p.y = p0.y; run.hp = W.ST.maxHp; run.potions = W.ST.potMax; W.p.inv = 2; toast('燈火重新亮起'); } }
+  if (W.over || W.p.dead) { respawnT += dt; if (respawnT > 1.8) { respawnT = 0; W.over = null; const run = W.run!; const p0 = W.p; W.p = mkPlayer(); W.p.x = p0.x; W.p.y = p0.y; run.hp = W.ST.maxHp; run.potions = W.ST.potMax; W.p.inv = 2; toast('燈火重新亮起'); frameEv('主角復活'); } }
   if (!W.ents.some((e: any) => e.boss)) { bossT -= dt; if (bossT <= 0) { bossT = 99; spawnBoss(); } }
   for (const e of W.ev) onEv(e); W.ev.length = 0;
   // 角色
@@ -515,7 +530,7 @@ async function main() {
   bar.style.width = '85%'; lp.textContent = '編譯著色器…';
   updCamera(1);
   // 預熱：把會在戰鬥中才出現的東西（Boss、小怪、刀光、光環、彈幕、提示圈）先畫一次，避免第一次出現時卡頓
-  const tmp = [new Actor('matriarch'), new Actor('slime')]; tmp.forEach((a, i) => { a.root.position.set(CX + i * 2, 0, CZ); scene.add(a.root); });
+  const tmp = [new Actor('matriarch'), new Actor('slime'), new Actor('slime'), new Actor('slime'), new Actor('slime')]; tmp.forEach((a, i) => { a.root.position.set(CX + i * 2, 0, CZ); if (a.kind === 'slime') a.model.traverse((o: any) => { if (o.isMesh) o.castShadow = !OPT.on; }); scene.add(a.root); });
   FX.slash(CX, CZ, 0, 1.5, 2, true, '#ffcf6a'); FX.slash(CX, CZ, 1, 1.5, 2, false, '#ff7fd0'); for (let i = 0; i < 3; i++) FX.ring(CX, CZ, 2, '#ffffff');
   for (const one of [false, true]) { FX.FXC.teleOne = one; FX.teleBegin(); FX.teleDraw('sector', CX, CZ, 0, 2, 1.5, 0.5, true); FX.teleDraw('circle', CX, CZ, 0, 2, 0, 0.5, false); FX.teleDraw('rect', CX, CZ, 0, 4, 0.5, 0.5, true); FX.teleEnd(); } FX.FXC.teleOne = OPT.tele1;
   env.grass.material = env.grass.userData.mats.lam; try { await renderer.compileAsync(scene, camera); } catch { /* 預熱失敗不影響執行 */ } applyOpt();
@@ -523,7 +538,7 @@ async function main() {
   FX.emit(20, { x: CX, y: 1, z: CZ, c: '#fff', life: [0.1, 0.2] }); FX.updFx(0.016);
   try { await renderer.compileAsync(scene, camera); } catch (e) { console.warn(e); }
   pipeline.render(); await new Promise((r) => setTimeout(r, 50)); pipeline.render();
-  tmp.forEach((a) => scene.remove(a.root)); FX.updArcs(10); FX.teleBegin(); FX.teleEnd(); FX.shotsBegin(); FX.shotsEnd();
+  tmp.forEach((a) => releaseActor(a)); FX.updArcs(10); FX.teleBegin(); FX.teleEnd(); FX.shotsBegin(); FX.shotsEnd();
   bar.style.width = '100%';
   $('#boot').style.display = 'none';
   resetStats(); stats();
