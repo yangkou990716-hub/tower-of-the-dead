@@ -87,7 +87,7 @@ function rect(len: number, w: number) {
   return g;
 }
 let teleI = 0, teleN = 0;
-export function teleBegin() { teleI = 0; }
+export function teleBegin() { teleI = 0; tele1I = 0; }
 /** 畫一個提示：shape 'sector'|'circle'|'rect'；p = 進度 0..1 */
 export function teleDraw(shape: string, x: number, z: number, ang: number, a: number, b: number, p: number, parry: boolean) {
   if (FXC.teleOne) { teleDraw1(shape, x, z, ang, a, b, p, parry); return; }
