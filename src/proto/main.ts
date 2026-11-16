@@ -227,7 +227,7 @@ function hud() {
 // ---------------- 按鈕 ----------------
 document.querySelectorAll<HTMLButtonElement>('[data-q]').forEach((e) => e.onclick = () => { tier = e.dataset.q as Tier; applyTier(); resetStats(); });
 document.querySelectorAll<HTMLButtonElement>('[data-r]').forEach((e) => e.onclick = () => { setRoute(e.dataset.r as Route).then(resetStats); });
-document.querySelectorAll<HTMLButtonElement>('[data-api]').forEach((e) => e.onclick = () => { store.set('api', e.dataset.api!); const u = new URL(location.href); u.searchParams.set('api', e.dataset.api!); location.href = u.href; });
+document.querySelectorAll<HTMLButtonElement>('[data-api]').forEach((e) => e.onclick = () => { store.set('api', e.dataset.api!); if (Q.has('api')) { const u = new URL(location.href); u.searchParams.set('api', e.dataset.api!); location.href = u.href; } else location.reload(); });
 $('#auto').onclick = () => { autoDown = !autoDown; store.set('auto', autoDown ? '1' : '0'); hud(); };
 $('#reset').onclick = () => { resetStats(); S.log = []; hud(); };
 $('#copy').onclick = async () => {

@@ -17,7 +17,8 @@ export async function loadKay(base: string, onProg: (done: number, total: number
   let done = 0, bytes = 0;
   const got: Record<string, GLTF> = {};
   await Promise.all(all.map(async (k) => {
-    const buf = await (await fetch(`${base}models/kaykit/${k}.glb`)).arrayBuffer(); bytes += buf.byteLength;
+    const ext = (window as any).__KAY_EXT || '.glb'; // 某些靜態主機不接受 .glb，可改副檔名
+    const res = await fetch(`${base}models/kaykit/${k}${ext}`); if (!res.ok) throw new Error(`${k}: HTTP ${res.status}`); const buf = await res.arrayBuffer(); bytes += buf.byteLength;
     got[k] = await loader.parseAsync(buf, `${base}models/kaykit/`);
     onProg(++done, all.length);
   }));
