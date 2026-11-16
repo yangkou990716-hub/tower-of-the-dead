@@ -10,13 +10,13 @@ await p.goto(process.env.URL || 'http://localhost:5173/');
 await p.waitForFunction(() => window.__totd, null, { timeout: 15000 });
 const click = async (text) => { const l = p.locator('button', { hasText: text }).last(); await l.waitFor({ timeout: 5000 }); if (mobile) await l.tap(); else await l.click(); await p.waitForTimeout(250); };
 await click('踏入塔中'); await p.screenshot({ path: out + '_slots.png' });
-await click('開始'); await p.waitForTimeout(300); await p.screenshot({ path: out + '_howto.png' });
-await click('知道了'); await p.screenshot({ path: out + '_camp.png' });
+await click('開始'); await p.waitForTimeout(1500); await p.screenshot({ path: out + '_intro.png' });
+await click('略過'); await p.screenshot({ path: out + '_camp.png' });
 await click('出發遠征'); await p.waitForTimeout(300);
 if (cls !== 'knight') await p.evaluate((c) => { const t = window.__totd; t.Saves.cur.meta.cls[c] = 1; }, cls);
 await p.screenshot({ path: out + '_class.png' });
 if (cls !== 'knight') { await p.evaluate((c) => { const t = window.__totd; t.UI.closeAll(); t.App.startRun(c, 'normal'); }, cls); } else await click('出發');
-await p.waitForTimeout(1800); await p.screenshot({ path: out + '_0.png' });
+await p.waitForTimeout(4000); await p.screenshot({ path: out + '_0.png' });
 if (secs > 0) {
   await p.evaluate(async ({ god }) => {
     const { mkBot } = await import('/src/sim/bot.ts'); const t = window.__totd; const bot = mkBot(0.75, { headless: false });

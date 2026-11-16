@@ -9,7 +9,7 @@ const PADMAP = ['dodge', 'parry', 'heavy', 'potion', 's1', 's2', 's1', 's2', 'ma
 
 export const Input = {
   k: {} as Record<string, boolean>, q: {} as Record<string, boolean>, dn: {} as Record<string, boolean>,
-  mv: { x: 0, y: 0 }, aimV: { x: 0, y: 0, on: false }, mx: 0, my: 0, touch: false, pad: false, padPrev: [] as boolean[], lastAim: 0,
+  mv: { x: 0, y: 0 }, aimV: { x: 0, y: 0, on: false }, aimRelease: false, mx: 0, my: 0, touch: false, pad: false, padPrev: [] as boolean[], lastAim: 0,
   enabled: false, toWorld: (x: number, y: number) => ({ x, y }), onMode: () => {},
   press(a: string) { this.q[a] = true; },
   take(a: string) { const v = this.q[a]; this.q[a] = false; return !!v; },
@@ -45,6 +45,17 @@ export const Input = {
     const end = (e: PointerEvent) => { if (e.pointerId !== id) return; id = null; base.classList.remove('on'); base.style.left = ''; base.style.top = ''; knob.style.transform = ''; cb(0, 0, false); };
     zone.addEventListener('pointerup', end); zone.addEventListener('pointercancel', end);
   },
+  /** 觸控攻擊鍵：點 = 輕攻擊（自動瞄準）、按住 = 蓄力、拖曳 = 手動瞄準。 */
+  attackPad(el: HTMLElement) {
+    let id: number | null = null, ox = 0, oy = 0; const arrow = el.querySelector('.aimdir') as HTMLElement | null;
+    el.addEventListener('pointerdown', (e) => { this.setTouch(true); Snd.init(); if (id !== null) return; id = e.pointerId; try { el.setPointerCapture(id); } catch { /* 無 */ } const a = View.toApp(e.clientX, e.clientY); ox = a.x; oy = a.y;
+      this.press('attack'); this.dn.attack = true; this.aimV.on = false; this.aimRelease = false; el.classList.add('on'); e.preventDefault(); e.stopPropagation(); });
+    el.addEventListener('pointermove', (e) => { if (e.pointerId !== id) return; const a = View.toApp(e.clientX, e.clientY), dx = a.x - ox, dy = a.y - oy, d = hypot(dx, dy), th = View.h * 0.055;
+      if (d > th) { this.aimV.on = true; this.aimV.x = dx / d; this.aimV.y = dy / d; el.classList.add('aim'); if (arrow) arrow.style.transform = `rotate(${atan2(dy, dx)}rad)`; } else if (d < th * 0.6) { this.aimV.on = false; el.classList.remove('aim'); }
+      e.preventDefault(); });
+    const end = (e: PointerEvent) => { if (e.pointerId !== id) return; id = null; this.dn.attack = false; this.press('attackUp'); this.aimRelease = this.aimV.on; el.classList.remove('on', 'aim'); };
+    el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+  },
   button(el: HTMLElement, name: string) {
     el.addEventListener('pointerdown', (e) => { this.setTouch(true); Snd.init(); this.press(name); this.dn[name] = true; el.classList.add('on'); e.preventDefault(); e.stopPropagation(); });
     const up = () => { if (!this.dn[name]) return; this.dn[name] = false; this.press(name + 'Up'); el.classList.remove('on'); };
@@ -66,7 +77,13 @@ export const Input = {
     if (!this.touch && !this.pad) { let x = 0, y = 0; if (k.KeyA || k.ArrowLeft) x--; if (k.KeyD || k.ArrowRight) x++; if (k.KeyW || k.ArrowUp) y--; if (k.KeyS || k.ArrowDown) y++; const d = hypot(x, y) || 1; this.mv.x = x / d; this.mv.y = y / d; }
     this.pollPad();
     const m = hypot(this.mv.x, this.mv.y); I.mx = m > 1 ? this.mv.x / m : this.mv.x; I.my = m > 1 ? this.mv.y / m : this.mv.y; if (m < 0.16) I.mx = I.my = 0;
-    if (this.touch || this.pad) {
+    if (this.touch) {
+      // 攻擊鍵：沒有拖曳時由模擬層自動瞄準最近的敵人；拖曳時用拖曳方向
+      if (this.aimV.on) I.aim = this.lastAim = atan2(this.aimV.y, this.aimV.x);
+      else { I.auto = true; if (m > 0.3) I.aim = this.lastAim = atan2(this.mv.y, this.mv.x); }
+      if (this.aimRelease) { this.aimRelease = false; this.aimV.on = false; }
+      I.attack = this.take('attack'); I.attackHeld = !!this.dn.attack; I.attackUp = this.take('attackUp');
+    } else if (this.pad) {
       I.repeat = true;
       if (this.aimV.on) I.aim = this.lastAim = atan2(this.aimV.y, this.aimV.x); else if (m > 0.3) I.aim = this.lastAim = atan2(this.mv.y, this.mv.x);
       I.attackHeld = this.aimV.on; I.attack = this.take('attack'); I.heavyHeld = !!this.dn.heavy; I.heavyUp = this.take('heavyUp');

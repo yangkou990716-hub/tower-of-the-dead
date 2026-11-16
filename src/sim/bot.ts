@@ -72,7 +72,7 @@ export function mkBot(skill = 0.6, opts: { parry?: number; headless?: boolean } 
         if (td > range * 0.8 + tgt.r) nav(tgt.x, tgt.y);
         else if (k.proj && td < 150) go(p.x - cos(I.aim), p.y - sin(I.aim));
         else if (p.sta < 15) go(p.x - cos(I.aim) + sin(I.aim) * side, p.y - sin(I.aim) - cos(I.aim) * side, 0.8);
-        if (td <= range + tgt.r && p.sta > 22 && tgt.state !== 'spawn') { I.attack = true; I.attackHeld = true; I.repeat = true; }
+        if (td <= range + tgt.r && p.sta > 22 && tgt.state !== 'spawn') { I.attack = true; }
         if (p.cds[0] <= 0 && td < 160 && rnd() < 0.02) I.s1 = true;
         if (p.cds[1] <= 0 && rnd() < 0.01) I.s2 = true;
       }

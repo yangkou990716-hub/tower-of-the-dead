@@ -1,7 +1,7 @@
 // 遊戲主畫面：把模擬世界 W 畫出來。分層：地板 → 角色與牆（依 y 穿插）→ 光照圖（相乘）→ 泛光與特效（相加）。
 import Phaser from 'phaser';
 import { W } from '../sim/state';
-import { step } from '../sim/combat';
+import { step, autoTarget, autoRange } from '../sim/combat';
 import { T, RW, RH, RPW, RPH, WH, VH, TAU, PI, sin, cos, abs, min, max, clamp, lerp, rr, rnd, Mf, easeOut, hypot } from '../sim/util';
 import { DOOR_TILES } from '../sim/world';
 import { EL, WPN, RUNE } from '../sim/data';
@@ -26,7 +26,7 @@ export class GameScene extends Phaser.Scene {
   roomObjs: Phaser.GameObjects.GameObject[] = []; art: RoomArt = { lights: [], props: [] };
   ents = new Map<number, any>(); shots = new Map<number, any>(); hazs = new Map<number, any>(); picks = new Map<number, any>(); objs = new Map<number, any>();
   pv: any = null; doors: any[] = []; flashes: any[] = []; bolts: any[] = []; fog: Img[] = [];
-  shake = 0; cam = { x: 0, y: 0 }; zoom = 1; VW = 960; biomeKey = ''; time0 = 0; lit = true; ambT = 0;
+  shake = 0; cam = { x: 0, y: 0 }; kick = { x: 0, y: 0 }; zp = 0; zoom = 1; VW = 960; biomeKey = ''; time0 = 0; lit = true; ambT = 0;
   constructor() { super('game'); }
 
   create() {
@@ -128,12 +128,13 @@ export class GameScene extends Phaser.Scene {
     return v;
   }
   updEnemy(v: any, e: any) {
-    const left = cos(e.a) < 0, t = this.time0; let sc = v.sc * S1, a = 1, jx = 0, sxm = 1, sym = 1;
+    const left = cos(e.a) < 0, t = this.time0; let sc = v.sc * S1, a = 1, jx = 0, jy = 0, sxm = 1, sym = 1, rot = 0;
     if (e.state === 'spawn') { const k = clamp(1 - e.t / 0.8, 0, 1); a = k; sc *= 0.55 + 0.45 * k; }
     else if (e.state === 'wind') jx = sin(t * 70) * (1 - e.t / e.tw) * 1.3;
     else if (e.state === 'act' && e.atk?.t === 'dash') { sxm = 1.18; sym = 0.86; if (rnd() < 0.6) this.fx.spawn({ key: 'smoke', x: e.x, y: e.y - 8, life: 0.3, s0: e.r / 16, s1: e.r / 30, a0: 0.3, a1: 0, tint: toInt(e.d.c2), depth: 99 + e.y }); }
     else if (e.state === 'stag') { jx = sin(t * 30) * 1.2; if (rnd() < 0.08) this.fx.spawn({ key: 'star', x: e.x + rr(-10, 10), y: e.y - v.h - 4, vy: -14, life: 0.45, s0: 0.5, s1: 0.1, tint: 0xfff0a0 }); }
-    v.body.setFrame(enemyFrame(e)).setFlipX(left).setPosition(e.x + jx, e.y).setScale(sc * sxm, sc * sym).setAlpha(a).setDepth(100 + e.y);
+    if (e.hitT > 0) { const k = clamp(e.hitT / 0.2, 0, 1); jx += cos(e.hitA) * k * 5; jy = sin(e.hitA) * k * 3; sxm *= 1 + 0.22 * k; sym *= 1 - 0.18 * k; rot = (cos(e.hitA) >= 0 ? 1 : -1) * k * 0.18; }
+    v.body.setFrame(enemyFrame(e)).setFlipX(left).setPosition(e.x + jx, e.y + jy).setScale(sc * sxm, sc * sym).setRotation(rot).setAlpha(a).setDepth(100 + e.y);
     if (e.flash > 0) v.body.setTintFill(0xffffff); else if (e.st.chill > 0) v.body.setTint(0x9fd4ff); else if (e.st.burn > 0) v.body.setTint(0xffb890); else if (e.st.poison > 0) v.body.setTint(0xc4f0a0); else if (e.st.shock > 0) v.body.setTint(0xfff2a0); else v.body.clearTint();
     if (e.st.burn > 0 && rnd() < 0.2) this.fx.spawn({ key: 'dot', x: e.x + rr(-e.r, e.r), y: e.y - rr(4, v.h), vy: -50, life: 0.4, s0: 0.5, s1: 0, tint: 0xff8a3d });
     v.sh.setPosition(e.x, e.y + 1).setScale(S1 * e.r / 13, S1 * e.r / 13).setAlpha(a * 0.9);
@@ -159,6 +160,14 @@ export class GameScene extends Phaser.Scene {
     }
     for (let i = this.bolts.length - 1; i >= 0; i--) { const b = this.bolts[i]; b.t -= 1 / 60; if (b.t <= 0) { this.bolts.splice(i, 1); continue; }
       g.lineStyle(3, 0xffe66b, b.t * 8); g.beginPath(); g.moveTo(b.x1, b.y1); const n = 5; for (let j = 1; j < n; j++) g.lineTo(lerp(b.x1, b.x2, j / n) + rr(-9, 9), lerp(b.y1, b.y2, j / n) + rr(-9, 9)); g.lineTo(b.x2, b.y2); g.strokePath(); }
+    // 面向指示與自動鎖定圈（觸控：讓玩家知道這一擊會打向誰）
+    const p = W.p;
+    if (p && !p.dead && !W.paused) {
+      const manual = Input.touch && Input.aimV.on, ca = cos(p.aim), sa = sin(p.aim), d0 = manual || p.charge > 0 ? 44 : 30, al = manual || p.charge > 0 ? 0.9 : 0.4, y0 = p.y - 6;
+      g.fillStyle(manual ? 0xffd27a : 0xf1ead8, al); g.fillTriangle(p.x + ca * (d0 + 9), y0 + sa * (d0 + 9), p.x + ca * d0 - sa * 5.5, y0 + sa * d0 + ca * 5.5, p.x + ca * d0 + sa * 5.5, y0 + sa * d0 - ca * 5.5);
+      if (manual) { g.lineStyle(2, 0xffd27a, 0.35); g.lineBetween(p.x + ca * 18, y0 + sa * 18, p.x + ca * d0, y0 + sa * d0); }
+      if (Input.touch && !manual) { const tg = autoTarget(p.aim, autoRange()); if (tg) { const r0 = tg.r + 7 + sin(this.time0 * 7) * 1.5; g.lineStyle(2, 0xf3b95f, 0.75); for (let i = 0; i < 4; i++) { const a0 = this.time0 * 1.6 + i * PI / 2; g.beginPath(); g.arc(tg.x, tg.y - 2, r0, a0, a0 + 0.9, false); g.strokePath(); } } }
+    }
     // 互動提示光圈
     const n = W.near; if (n && !W.paused) { g.lineStyle(2, 0xf3b95f, 0.5 + 0.3 * sin(this.time0 * 6)); g.strokeEllipse(n.x, n.y + 4, 46, 20); }
   }
@@ -211,12 +220,21 @@ export class GameScene extends Phaser.Scene {
   ringFx(x: number, y: number, r: number, tint: number, life = 0.35, depth = 925) { this.fx.spawn({ key: 'ring', x, y, life, s0: r / 54 * 0.25, s1: r / 54, a0: 0.9, a1: 0, tint, depth }); }
   handleEvents() {
     const fx = this.fx, evs = W.ev.splice(0);
-    for (const e of evs) switch (e.k) {
+    for (const e of evs) { Bus.emit('ev', e); switch (e.k) {
+      case 'kick': this.kick.x += cos(e.a) * e.k * 10; this.kick.y += sin(e.a) * e.k * 7; this.zp = max(this.zp, e.k * 0.035); break;
       case 'snd': Snd.play(e.n); break;
       case 'room': this.buildRoom(); break;
       case 'dmg': if (e.heal) fx.num(e.x, e.y, '+' + e.v, 0x9ae6a8, 0.9); else if (e.hurt) fx.num(e.x, e.y, '-' + e.v, 0xff6a5e, e.small ? 0.7 : 1.15); else fx.num(e.x, e.y, e.v + (e.crit ? '!' : ''), e.blocked ? 0x8a94a0 : e.crit ? 0xffd27a : e.small ? toInt(e.col || '#f1ead8') : 0xffffff, e.crit ? 1.25 : e.small ? 0.65 : 0.9); break;
-      case 'hitfx': { const c = toInt(e.col || '#fff'); fx.burst(e.x, e.y, e.crit ? 9 : 5, { key: 'spark', ang: e.a, spread: 0.9, spd: [120, 380], life: 0.22, s0: e.crit ? 1.1 : 0.8, s1: 0.2, tint: e.blocked ? 0xb0b8c0 : c, drag: 5 });
-        fx.spawn({ key: 'star', x: e.x, y: e.y, life: 0.14, s0: e.crit ? 2.2 : 1.3, s1: 0.4, tint: 0xffffff, rot: rr(0, TAU) }); this.flash(e.x, e.y, e.crit ? 90 : 55, c, 0.7, 0.12); this.shake = max(this.shake, e.crit ? 5 : 2.2); break; }
+      case 'hitfx': { const c = toInt(e.col || '#fff'), c2 = toInt(e.c2 || '#fff'), big = e.crit || e.heavy, pw = e.crit ? 1.5 : e.heavy ? 1.25 : 1;
+        if (e.blocked) { fx.burst(e.x, e.y, 6, { key: 'spark', ang: e.a + PI, spread: 1.1, spd: [140, 360], life: 0.2, s0: 0.8, s1: 0.2, tint: 0xc8d0d8, drag: 5 }); this.shake = max(this.shake, 1.5); break; }
+        // 衝擊線：垂直於攻擊方向的亮線，讓「砍到了」一眼可見
+        fx.spawn({ key: 'spark', x: e.x, y: e.y, rot: e.a + PI / 2 + rr(-0.5, 0.5), life: 0.13, s0: 2.6 * pw, s1: 3.6 * pw, sx: 1.9, a0: 1, a1: 0, tint: 0xffffff });
+        fx.spawn({ key: 'spark', x: e.x, y: e.y, rot: e.a + rr(-0.3, 0.3), life: 0.1, s0: 1.8 * pw, s1: 2.6 * pw, sx: 1.6, a0: 0.9, a1: 0, tint: c });
+        fx.spawn({ key: 'star', x: e.x, y: e.y, life: 0.15, s0: 2 * pw, s1: 0.5, tint: 0xffffff, rot: rr(0, TAU) });
+        fx.burst(e.x, e.y, big ? 12 : 7, { key: 'spark', ang: e.a, spread: 0.8, spd: [180, 520 * pw], life: 0.24, s0: 0.9 * pw, s1: 0.2, tint: c, drag: 5 });
+        fx.burst(e.x, e.y, big ? 8 : 4, { key: 'shard', ang: e.a, spread: 0.9, spd: [90, 300], lr: [0.3, 0.6], s0: 1.3, s1: 0.2, tint: c2, grav: 520, vr: 12, add: false, depth: 100 + e.y + 40 });
+        if (big) this.ringFx(e.x, e.y, (e.r || 14) * 3.2, e.crit ? 0xffd27a : 0xffffff, 0.22);
+        this.flash(e.x, e.y, big ? 120 : 70, e.crit ? 0xffd27a : c, 0.85, 0.14); this.shake = max(this.shake, e.crit ? 6 : e.heavy ? 5 : 2.6); break; }
       case 'swing': case 'eswing': { const pl = e.k === 'swing', thr = e.kind === 'spear'; const rng = pl ? e.rng : e.r, c = toInt(e.col || '#fff');
         const im = img(this, thr ? 'thrust' : 'slash', 0, thr ? 10 / 160 : 14 / 128, 0.5).setBlendMode(ADD).setDepth(920).setTint(c).setPosition(e.x, e.y - (pl ? 12 : 8)).setRotation(e.a);
         const sc = thr ? rng / 150 : rng / 100, ys = thr ? (e.heavy ? 1.5 : 1) : sc * (e.arc ? clamp(e.arc / 2.1, 0.5, 1.4) : 1) * (e.side === -1 ? -1 : 1);
@@ -263,7 +281,7 @@ export class GameScene extends Phaser.Scene {
       case 'floor': Bus.emit('floor'); break;
       case 'exhaust': Bus.emit('exhaust'); break;
       case 'stairs': Bus.emit('toast', '通往下一層的階梯出現了', 'good'); break;
-    }
+    } }
   }
 
   // ---------- 鏡頭與光照 ----------
@@ -276,8 +294,10 @@ export class GameScene extends Phaser.Scene {
     const p = W.p, c = this.cam, look = Input.touch ? 0 : 26;
     const tx = p.x + cos(p.aim) * look - this.VW / 2, ty = p.y - 12 + sin(p.aim) * look * 0.6 - VH / 2, k = 1 - Math.pow(0.0015, dt);
     c.x = lerp(c.x, tx, k); c.y = lerp(c.y, ty, k); this.clampCam();
-    this.shake = max(0, this.shake - dt * 28); const sk = Saves.settings.shake ? this.shake : 0;
-    this.cameras.main.centerOn(c.x + this.VW / 2 + rr(-sk, sk), c.y + VH / 2 + rr(-sk, sk));
+    this.shake = max(0, this.shake - dt * 30); const on = Saves.settings.shake, sk = on ? this.shake : 0, kf = min(1, dt * 14);
+    this.kick.x -= this.kick.x * kf; this.kick.y -= this.kick.y * kf; this.zp = max(0, this.zp - dt * 0.22);
+    const cm = this.cameras.main; cm.setZoom(this.zoom * (1 + (on ? this.zp : 0)));
+    cm.centerOn(c.x + this.VW / 2 + rr(-sk, sk) + (on ? this.kick.x : 0), c.y + VH / 2 + rr(-sk, sk) + (on ? this.kick.y : 0));
   }
   light() {
     const rt = this.rt; if (!rt) return; const P = W.room.biome.pal, t = this.time0, p = W.p;

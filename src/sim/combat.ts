@@ -5,15 +5,15 @@ import { WPN, KIND, RUNE, RELIC, CLS, EN, DIFF, EL, biomeOf } from './data';
 import { genFloor, buildRoom, DOOR_TILES, DIRS, COMBAT_TYPES, SOLID, freeTiles, tileCenter, doorDirAt } from './world';
 
 export const FEATURES = ['treasure', 'campfire'];
-const DODGE_T = 0.34;
+const DODGE_T = 0.3;
 
 // ================= 數值 =================
 export function calcStats() {
   const run = W.run!, c = CLS[run.cls], m: any = W.meta?.tal || {}, D = DIFF[run.diff] || DIFF.normal;
   const S: any = {
-    maxHp: c.hp + (m.hp || 0) * 8, maxSta: c.sta + (m.sta || 0) * 6, staRegen: 30, speed: c.spd,
+    maxHp: c.hp + (m.hp || 0) * 8, maxSta: c.sta + (m.sta || 0) * 6, staRegen: 38, speed: c.spd,
     dmg: 1 + (m.dmg || 0) * 0.04, crit: 0.05 + (m.crit || 0) * 0.03, critMult: 1.8, armor: (m.arm || 0) * 0.04,
-    potMax: 3 + (m.pot || 0), iframe: 0.26 + D.ifr, parryWin: 0.2 + (c.parry || 0), dodgeCost: 24 * (c.dodge || 1),
+    potMax: 3 + (m.pot || 0), iframe: 0.25 + D.ifr, parryWin: 0.2 + (c.parry || 0), dodgeCost: 22 * (c.dodge || 1),
     cdr: 1, goldMult: 1, shardMult: (1 + (m.shard || 0) * 0.1) * D.shard, shopMult: 1 - (m.shop || 0) * 0.05, slots: 2,
     leech: 0, exec: 0, aspd: 1, range: 1, staCost: 1, vsStag: 0, echo: 0, ward: 0, heavy: 1, hpMul: 1, luck: 0, killHeal: 0, roomHeal: 0, els: [] as string[],
   };
@@ -82,7 +82,7 @@ const solidPx = (x: number, y: number) => SOLID(W.room.g[Mf(y / T)]?.[Mf(x / T)]
 export function mkPlayer() {
   return { x: RPW / 2, y: RPH / 2, r: 11, vx: 0, vy: 0, aim: 0, moving: false, mvx: 0, mvy: 0, sta: W.ST.maxSta, inv: 0,
     dodgeT: 0, dodgeAge: 9, ddx: 0, ddy: 0, pdDone: false, dashK: null as any, parryT: 0, parryCd: 0, parryFail: 0,
-    atkCd: 0, atkLock: 0, bufAtk: 0, holdT: 0, charge: 0, staDelay: 0, hurt: 0, cds: [0, 0], potT: 0, potHeal: false,
+    atkCd: 0, atkLock: 0, atkHeavy: false, bufAtk: 0, holdT: 0, charge: 0, staDelay: 0, hurt: 0, cds: [0, 0], potT: 0, potHeal: false,
     buff: { cry: 0, smoke: 0, pd: 0, smokeCrit: 0 } as Record<string, number>, shield: 0, combo: 0, comboT: 0, hitN: 0,
     st: { burn: 0, poison: 0, chill: 0, tick: 0 } as Record<string, number>, dead: false, swing: null as any, swingSide: 1, spikeHit: -1, anim: 0 };
 }
@@ -99,7 +99,7 @@ function tryDodge() {
   if (p.dodgeT > 0 || p.sta <= 0) { if (p.sta <= 0) snd('deny'); return; }
   let dx = I.mx, dy = I.my; const m = hypot(dx, dy);
   if (m < 0.2) { dx = cos(p.aim); dy = sin(p.aim); } else { dx /= m; dy /= m; }
-  p.sta = max(0, p.sta - S.dodgeCost); p.staDelay = p.sta <= 0 ? 1.2 : 0.5;
+  p.sta = max(0, p.sta - S.dodgeCost); p.staDelay = p.sta <= 0 ? 0.9 : 0.4;
   p.dodgeT = DODGE_T; p.dodgeAge = 0; p.ddx = dx; p.ddy = dy; p.pdDone = false; p.dashK = null; p.charge = 0; p.parryT = 0; p.potT = 0; p.potHeal = false;
   snd('dodge'); emit('dodge', { x: p.x, y: p.y, a: Math.atan2(dy, dx) });
 }
@@ -148,7 +148,7 @@ export function hitPlayer(dmg: number, src: any, o: any = {}): string {
   if (from) { const a = angTo(from, p); p.vx += cos(a) * 240; p.vy += sin(a) * 240; }
   if (o.eff === 'poison') p.st.poison = 4; else if (o.eff === 'fire') p.st.burn = 3; else if (o.eff === 'ice') p.st.chill = 2.5;
   if (S.thorns && src && src.d && !o.shot && !src.dead) hitEnemy(src, S.thorns, { dot: true, col: '#c9a25a' });
-  W.hitstop = max(W.hitstop, 0.06);
+  W.hitstop = max(W.hitstop, 0.11);
   snd('hurt'); emit('phit', { x: p.x, y: p.y, v: d }); emit('dmg', { x: p.x, y: p.y - 34, v: d, hurt: true });
   if (run.hp <= 0) {
     if (S.phoenix && !run.flags.phoenix) {
@@ -165,15 +165,24 @@ function assist(a: number, range: number) {
   for (const e of W.ents) { if (e.dead) continue; const d = dist(W.p, e); if (d > range) continue; const df = abs(angDiff(angTo(W.p, e), a)); if (df < bd) { bd = df; best = e; } }
   return best ? angTo(W.p, best) : a;
 }
+/** 觸控攻擊鍵的自動瞄準目標：最近的敵人優先，面前的略為加權。 */
+export function autoTarget(a: number, range: number) {
+  let best: any = null, bs = 1e9;
+  for (const e of W.ents) { if (e.dead || e.state === 'spawn') continue; const d = dist(W.p, e) - e.r; if (d > range) continue; const sc = d * (1 + abs(angDiff(angTo(W.p, e), a)) * 0.3); if (sc < bs) { bs = sc; best = e; } }
+  return best;
+}
+export const autoRange = () => { const k = KIND[(WPN[W.run!.wpn.id] || WPN.iron).k]; return k.proj ? 470 : k.rng * W.ST.range * 2.6 + 50; };
+function autoAim(a: number, range: number) { const t = autoTarget(a, range); return t ? angTo(W.p, t) : a; }
 function canAct() { const p = W.p; return p.dodgeT <= 0 && p.potT <= 0 && p.parryFail <= 0; }
 
 function doAttack(heavy: boolean, ck = 0) {
   const run = W.run!, S = W.ST, p = W.p, w = WPN[run.wpn.id], k = KIND[w.k], I = W.in;
   if (p.sta <= 0) { snd('deny'); emit('exhaust', {}); return; }
-  p.sta = max(0, p.sta - k.sta * S.staCost * (heavy ? 1.8 : 1)); p.staDelay = p.sta <= 0 ? 1.2 : 0.55;
+  p.sta = max(0, p.sta - k.sta * S.staCost * (heavy ? 1.6 : 1)); p.staDelay = p.sta <= 0 ? 0.9 : 0.4;
   if (p.sta <= 0) emit('exhaust', {});
-  p.atkCd = (k.cd / S.aspd) * (heavy ? 1.35 : 1); p.atkLock = heavy ? 0.28 : 0.13; p.bufAtk = 0;
-  if (I.repeat && W.assistOn !== false) p.aim = assist(p.aim, (k.proj ? 420 : k.rng * 2.2));
+  p.atkCd = (k.cd / S.aspd) * (heavy ? 1.35 : 1); p.atkLock = heavy ? 0.26 : 0.12; p.atkHeavy = heavy; p.bufAtk = 0;
+  if (I.auto) p.aim = autoAim(p.aim, k.proj ? 470 : k.rng * 2.6 + 50);
+  else if (I.repeat && W.assistOn !== false) p.aim = assist(p.aim, (k.proj ? 420 : k.rng * 2.2));
   let dmg = weaponDmg() * (heavy ? k.hv * S.heavy * (0.85 + 0.3 * ck) : 1);
   if (S.berserk && run.hp < S.maxHp * 0.4) dmg *= 1 + S.berserk;
   if (p.buff.cry > 0) dmg *= 1.3;
@@ -194,17 +203,17 @@ function doAttack(heavy: boolean, ck = 0) {
     const rng = k.rng * S.range * (heavy ? 1.25 : 1), arc = k.arc * (heavy ? 1.25 : 1);
     p.swingSide *= -1; p.swing = { a: p.aim, arc, rng, t: 0, d: heavy ? 0.24 : 0.16, heavy, side: p.swingSide, kind: w.k };
     emit('swing', { x: p.x, y: p.y, a: p.aim, arc, rng, heavy, side: p.swingSide, kind: w.k, col });
-    snd(heavy ? 'heavy' : 'swing'); p.vx += ca * (heavy ? 250 : 100); p.vy += sa * (heavy ? 250 : 100);
+    snd(heavy ? 'heavy' : 'swing'); p.vx += ca * (heavy ? 300 : 140); p.vy += sa * (heavy ? 300 : 140);
     let any = false;
     for (const e of [...W.ents]) {
       if (e.dead || e.state === 'spawn') continue;
       const d = dist(p, e); if (d > rng + e.r) continue;
       if (d > e.r + 10 && abs(angDiff(angTo(p, e), p.aim)) > arc / 2 + 0.12) continue;
-      hitEnemy(e, dmg, { from: p, melee: true, heavy, crit, stag: heavy, kb: heavy ? 280 : 120, col }); any = true;
+      hitEnemy(e, dmg, { from: p, melee: true, heavy, crit, stag: heavy, kb: heavy ? 400 : 200, col }); any = true;
     }
     for (const s of W.shots) if (!s.dead && s.from === 'e' && heavy && dist(p, s) < rng && abs(angDiff(angTo(p, s), p.aim)) < arc / 2) killShot(s);
     if (heavy && w.sp === 'quake') mkHaz({ k: 'blast', from: 'p', x: p.x + ca * rng * 0.7, y: p.y + sa * rng * 0.7, r: 92, t: 0.12, dmg: dmg * 0.5, stag: true, col: '#c9a25a' });
-    if (any) W.hitstop = max(W.hitstop, heavy ? 0.07 : 0.03);
+    if (any) { W.hitstop = max(W.hitstop, heavy ? 0.12 : 0.055); emit('kick', { a: p.aim, k: heavy ? 1 : 0.45 }); }
   }
 }
 function handleAttack(dt: number) {
@@ -247,6 +256,7 @@ function startDash(dx: number, dy: number, dur: number, spd: number, k: any) {
 function useSkill(i: number) {
   const p = W.p, S = W.ST, run = W.run!, c = CLS[run.cls], sk = c.sk[i];
   if (p.cds[i] > 0 || !canAct()) { if (p.cds[i] > 0) snd('deny'); return; }
+  if (W.in.auto) p.aim = autoAim(p.aim, 340);
   p.cds[i] = sk.cd * S.cdr; const ca = cos(p.aim), sa = sin(p.aim), wd = weaponDmg(), id = run.cls + i;
   emit('skill', { id, x: p.x, y: p.y, a: p.aim });
   switch (id) {
@@ -293,16 +303,17 @@ function updPlayer(dt: number) {
   if (tile === 4 && p.dodgeT <= 0) st.burn = max(st.burn, 1.2);
   if (tile === 5 && room.spikeUp && p.dodgeT <= 0 && p.spikeHit !== room.spikeN) { p.spikeHit = room.spikeN; hitPlayer(9 + run.floor, null, { noParry: true, trap: true }); }
   if (I.aim !== null) p.aim = I.aim;
+  if (I.auto && p.charge > 0) { const w0 = WPN[run.wpn.id], k0 = KIND[w0.k]; p.aim = turn(p.aim, autoAim(p.aim, k0.proj ? 470 : k0.rng * 2.6 + 50), 10 * dt); }
   if (p.parryT > 0 && (p.parryT -= dt) <= 0) { p.parryT = 0; p.parryFail = 0.3; }
   if (p.potT > 0 && p.potHeal && p.potT < 0.3) { p.potHeal = false; heal(S.maxHp * 0.42); snd('heal'); emit('healfx', { x: p.x, y: p.y }); }
   if (p.staDelay <= 0 && p.dodgeT <= 0) p.sta = min(S.maxSta, p.sta + S.staRegen * dt * (p.charge > 0 ? 0.3 : 1));
   if (p.dodgeT > 0) {
-    p.dodgeT -= dt; p.dodgeAge += dt; const k = p.dashK, sp = k ? k.spd : 640 * (0.3 + 0.7 * max(0, p.dodgeT / DODGE_T));
+    p.dodgeT -= dt; p.dodgeAge += dt; const k = p.dashK, sp = k ? k.spd : 720 * (0.3 + 0.7 * max(0, p.dodgeT / DODGE_T));
     moveEnt(p, p.ddx * sp * dt, p.ddy * sp * dt); if (k) dashHit(k);
     if (p.dodgeT <= 0) { p.dashK = null; p.dodgeT = 0; }
     p.moving = true; if (I.attack) p.bufAtk = 0.22;
   } else {
-    let sp = S.speed; if (st.chill > 0) sp *= 0.7; if (tile === 6) sp *= 0.55; if (p.charge > 0) sp *= 0.5; if (p.potT > 0) sp *= 0.4; if (p.atkLock > 0) sp *= 0.3; if (p.parryFail > 0 || p.parryT > 0) sp *= 0.35;
+    let sp = S.speed; if (st.chill > 0) sp *= 0.7; if (tile === 6) sp *= 0.55; if (p.charge > 0) sp *= 0.55; if (p.potT > 0) sp *= 0.45; if (p.atkLock > 0) sp *= p.atkHeavy ? 0.35 : 0.6; if (p.parryFail > 0 || p.parryT > 0) sp *= 0.35;
     p.mvx = I.mx; p.mvy = I.my; p.moving = hypot(I.mx, I.my) > 0.12;
     moveEnt(p, (I.mx * sp + p.vx) * dt, (I.my * sp + p.vy) * dt);
     const f = min(1, 9 * dt); p.vx -= p.vx * f; p.vy -= p.vy * f;
@@ -332,7 +343,7 @@ export function mkEnemy(id: string, x: number, y: number, o: any = {}) {
   const e: any = { uid: ++W.seq, id, d, x, y, r: d.r * (o.elite ? 1.22 : 1), a: rnd() * TAU, state: 'spawn', t: o.t ?? 0.6 + rnd() * 0.4, tw: 1, cd: 0.5 + rnd() * 1.2,
     atk: null, lastAtk: null, flash: 0, kx: 0, ky: 0, anim: rnd() * 9, elite: !!o.elite, mod: o.mod || null, boss: !!d.boss, phase: 0, minion: !!o.minion,
     st: { burn: 0, burnD: 0, poison: 0, pT: 0, poiD: 0, chill: 0, shock: 0, tick: 0.5 }, dmgMul: ds * (o.elite ? 1.3 : 1), rep: 0, hitDone: false, dead: false,
-    avoid: 0, avoidDir: 1, strafe: rnd() < 0.5 ? 1 : -1, hop: rnd(), wa: rnd() * TAU, moving: false, sa: 0, sacc: 0, lock: 0.2 };
+    avoid: 0, avoidDir: 1, hitT: 0, hitA: 0, strafe: rnd() < 0.5 ? 1 : -1, hop: rnd(), wa: rnd() * TAU, moving: false, sa: 0, sacc: 0, lock: 0.2 };
   e.mhp = e.hp = round(d.hp * (d.boss ? 1 + Mf((f - 1) / 3) * 0.35 + cyc * 0.6 : hs) * (o.elite ? 2.6 : 1));
   W.ents.push(e);
   if (W.meta) W.meta.codex['en:' + id] = 1;
@@ -426,7 +437,8 @@ function updEnemy(e: any, dt0: number) {
   if (st.burn > 0) st.burn -= dt0; if (st.chill > 0) st.chill -= dt0; if (st.shock > 0) st.shock -= dt0;
   if (st.pT > 0 && (st.pT -= dt0) <= 0) st.poison = 0;
   if (e.flash > 0) e.flash -= dt0;
-  if (abs(e.kx) + abs(e.ky) > 1) { moveEnt(e, e.kx * dt0, e.ky * dt0); const f = min(1, 8 * dt0); e.kx -= e.kx * f; e.ky -= e.ky * f; }
+  if (abs(e.kx) + abs(e.ky) > 1) { moveEnt(e, e.kx * dt0, e.ky * dt0); const f = min(1, 11 * dt0); e.kx -= e.kx * f; e.ky -= e.ky * f; }
+  if (e.hitT > 0) e.hitT -= dt0;
   e.anim += dt * (e.moving ? 1.6 : 0.8);
   const d = dist(e, p), ang = angTo(e, p), sees = !(p.buff.smoke > 0) && !p.dead;
   switch (e.state) {
@@ -465,10 +477,11 @@ export function hitEnemy(e: any, base: number, o: any = {}) {
     if (S.comboUp) d *= 1 + min(0.3, p.combo * 0.02);
   }
   d = max(1, round(d)); e.hp -= d; e.flash = 0.12; run.stats.dmg += d;
+  if (!o.dot) { e.hitT = 0.2; e.hitA = o.from ? angTo(o.from, e) : 0; if (crit) W.hitstop = max(W.hitstop, 0.09); }
   emit('dmg', { x: e.x, y: e.y - e.r * 2 - 8, v: d, crit, blocked, col: o.col, small: !!o.dot });
   if (!o.dot) {
-    snd(blocked ? 'block' : crit ? 'crit' : 'hit');
-    emit('hitfx', { x: e.x, y: e.y - e.r * 0.9, a: o.from ? angTo(o.from, e) : 0, crit, blocked, col: o.col || EL.none });
+    snd(blocked ? 'block' : crit ? 'crit' : o.heavy ? 'hhit' : 'hit');
+    emit('hitfx', { x: e.x, y: e.y - e.r * 0.9, a: o.from ? angTo(o.from, e) : 0, crit, blocked, heavy: !!o.heavy, r: e.r, col: o.col || EL.none, c2: e.d.col });
     if (o.kb && !e.boss) { const a = angTo(o.from || p, e), kb = (o.kb * (e.elite ? 0.5 : 1)) / (1 + (e.d.poise || 0) * 0.6); e.kx += cos(a) * kb; e.ky += sin(a) * kb; }
     if (e.state !== 'stag' && !blocked) { const pz = e.boss ? 99 : e.elite ? 2 : e.d.poise || 0; if (o.stag && pz < 2) stagger(e, 0.7); else if (pz === 0 && (e.state === 'wind' || e.state === 'move')) stagger(e, 0.28); }
     if (!o.chain) {
@@ -495,7 +508,7 @@ function dropGold(x: number, y: number, total: number) {
 }
 function killEnemy(e: any) {
   if (e.dead) return; const S = W.ST, p = W.p, run = W.run!;
-  e.dead = true; e.hp = 0; run.kills++; if (W.meta) W.meta.stats.kills++;
+  e.dead = true; e.hp = 0; run.kills++; if (W.meta) W.meta.stats.kills++; W.hitstop = max(W.hitstop, e.boss ? 0.3 : e.elite ? 0.16 : 0.1);
   emit('die', { x: e.x, y: e.y, r: e.r, col: e.d.col, c2: e.d.c2, boss: e.boss, elite: e.elite, id: e.id }); snd('kill');
   if (S.killHeal) heal(S.killHeal, true);
   if (S.ward) p.shield = min(30, p.shield + S.ward);
