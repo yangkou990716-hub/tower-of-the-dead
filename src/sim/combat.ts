@@ -213,7 +213,7 @@ function doAttack(heavy: boolean, ck = 0) {
     }
     for (const s of W.shots) if (!s.dead && s.from === 'e' && heavy && dist(p, s) < rng && abs(angDiff(angTo(p, s), p.aim)) < arc / 2) killShot(s);
     if (heavy && w.sp === 'quake') mkHaz({ k: 'blast', from: 'p', x: p.x + ca * rng * 0.7, y: p.y + sa * rng * 0.7, r: 92, t: 0.12, dmg: dmg * 0.5, stag: true, col: '#c9a25a' });
-    if (any) { W.hitstop = max(W.hitstop, heavy ? 0.12 : 0.055); emit('kick', { a: p.aim, k: heavy ? 1 : 0.45 }); }
+    if (any) { W.hitstop = max(W.hitstop, heavy ? 0.12 : 0.055); emit('kick', { a: p.aim, f: heavy ? 1 : 0.45 }); }
   }
 }
 function handleAttack(dt: number) {

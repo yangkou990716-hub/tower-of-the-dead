@@ -51,4 +51,14 @@ describe('自動遊玩（模擬不當機、流程可前進）', () => {
     console.table(rows);
     expect(rows.some((r) => r.best >= 3)).toBe(true);
   }, 120000);
+
+  it('鏡頭回饋事件的數值有效（emit 的 k 是事件類型，不可當資料欄位）', () => {
+    W.meta = newMeta(); startRun(newRun('knight', 'normal', 4242));
+    const bot = mkBot(0.9); let kicks = 0;
+    for (let t = 0; t < 120 && !W.over; t += 1 / 60) {
+      step(1 / 60, () => { W.in = bot(1 / 60); });
+      for (const e of W.ev as any[]) if (e.k === 'kick') { kicks++; expect(Number.isFinite(e.f)).toBe(true); expect(Number.isFinite(e.a)).toBe(true); }
+    }
+    expect(kicks).toBeGreaterThan(0);
+  });
 });

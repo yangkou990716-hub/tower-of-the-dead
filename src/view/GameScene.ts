@@ -221,7 +221,7 @@ export class GameScene extends Phaser.Scene {
   handleEvents() {
     const fx = this.fx, evs = W.ev.splice(0);
     for (const e of evs) { Bus.emit('ev', e); switch (e.k) {
-      case 'kick': this.kick.x += cos(e.a) * e.k * 10; this.kick.y += sin(e.a) * e.k * 7; this.zp = max(this.zp, e.k * 0.035); break;
+      case 'kick': this.kick.x += cos(e.a) * e.f * 10; this.kick.y += sin(e.a) * e.f * 7; this.zp = max(this.zp, e.f * 0.035); break;
       case 'snd': Snd.play(e.n); break;
       case 'room': this.buildRoom(); break;
       case 'dmg': if (e.heal) fx.num(e.x, e.y, '+' + e.v, 0x9ae6a8, 0.9); else if (e.hurt) fx.num(e.x, e.y, '-' + e.v, 0xff6a5e, e.small ? 0.7 : 1.15); else fx.num(e.x, e.y, e.v + (e.crit ? '!' : ''), e.blocked ? 0x8a94a0 : e.crit ? 0xffd27a : e.small ? toInt(e.col || '#f1ead8') : 0xffffff, e.crit ? 1.25 : e.small ? 0.65 : 0.9); break;
