@@ -1,13 +1,15 @@
 // 亡者之塔 — Three.js 視覺原型（獨立入口 proto.html）。
 // 用現有 sim 驅動：genFloor/buildRoom 的格子 → 3D 房間；自動遊玩機器人（或手動）推動角色。
 import * as THREE from 'three/webgpu';
-import { pass, mrt, output, normalView, screenUV, builtinAOContext } from 'three/tsl';
+import { pass, mrt, output, normalView, screenUV, builtinAOContext, toonOutlinePass, uniform } from 'three/tsl';
+import { dof } from 'three/addons/tsl/display/DepthOfFieldNode.js';
+import { Style, STYLE_NAME, styleTree, toonGrade, hd2dGrade, focus, bakeSprites, hideSprites, setSpriteRes } from './style';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import { W } from '../sim/state';
 import { T, RW, RH } from '../sim/util';
 import { EN } from '../sim/data';
-import { newRun, startRun, step } from '../sim/combat';
+import { newRun, startRun, step, enterRoom } from '../sim/combat';
 import { mkBot } from '../sim/bot';
 import { TIERS, Tier, lowerTier } from './quality';
 import { buildRoomView, RoomView, Route, LightSrc } from './room';
@@ -22,12 +24,14 @@ const store = { get(k: string) { try { return localStorage.getItem('proto.' + k)
 
 let tier: Tier = (Q.get('q') as Tier) || (store.get('tier') as Tier) || 'balanced'; if (!TIERS[tier]) tier = 'balanced';
 let route: Route = (Q.get('assets') as Route) || (store.get('route') as Route) || 'kaykit';
-let autoDown = (Q.get('auto') ?? store.get('auto') ?? '1') === '1';
+let autoDown = (Q.get('auto') ?? store.get('auto') ?? '0') === '1'; // 風格比較：預設關閉自動降級
+let style: Style = (Q.get('style') as Style) || (store.get('style') as Style) || 'toon'; if (!STYLE_NAME[style]) style = 'toon';
+route = 'kaykit'; // 風格比較只用 KayKit（CC0）模型
 const wantGL = Q.get('api') === 'webgl' || (Q.get('api') == null && store.get('api') === 'webgl');
 
 // ---------------- 渲染器 ----------------
 const renderer = new THREE.WebGPURenderer({ antialias: false, forceWebGL: wantGL, powerPreference: 'high-performance' });
-renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.25;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.95;
 renderer.shadowMap.enabled = true;
 renderer.info.autoReset = false;
 renderer.onDeviceLost = (info: any) => { const b = $('#boot'); b.style.display = 'flex'; b.textContent = `GPU 裝置遺失（${info?.message || info?.reason || '未知'}）。請重新整理，或改用 WebGL 2：在網址後加 ?api=webgl`; };
@@ -38,11 +42,11 @@ const camera = new THREE.PerspectiveCamera(30, 1, 0.5, 80);
 const PITCH = 53 * Math.PI / 180;
 
 // ---------------- 光 ----------------
-const hemi = new THREE.HemisphereLight('#8aa4b6', '#1e2624', 0.95); scene.add(hemi);
+const hemi = new THREE.HemisphereLight('#cfe6ff', '#e8b98c', 1.05); scene.add(hemi); // 明亮天空光，陰影不死黑
 const keyLight = new THREE.SpotLight('#ffd9a0', 70, 20, 1.2, 0.85, 1.4); // 提燈的主光（有陰影）
 keyLight.castShadow = true; keyLight.shadow.bias = -0.0008; keyLight.shadow.normalBias = 0.03; keyLight.shadow.camera.near = 0.5; keyLight.shadow.camera.far = 16;
 scene.add(keyLight, keyLight.target);
-const moon = new THREE.DirectionalLight('#8fb4d8', 0.6); moon.position.set(-4, 10, 6); scene.add(moon, moon.target); // 冷色補光（無陰影），讓暗處看得清楚
+const moon = new THREE.DirectionalLight('#fff0d2', 1.1); moon.position.set(-4, 10, 6); scene.add(moon, moon.target); // 暖色陽光補光（無陰影）
 let pool: THREE.PointLight[] = [];
 function buildPool() {
   for (const l of pool) { scene.remove(l); l.dispose(); }
@@ -60,8 +64,16 @@ let pipeline: THREE.RenderPipeline | null = null, bloomNode: any = null, aoOk = 
 function buildPost() {
   const c = TIERS[tier];
   pipeline?.dispose(); pipeline = null; bloomNode = null;
-  if (!c.bloom && !c.ao) return;
   pipeline = new THREE.RenderPipeline(renderer);
+  if (style === 'toon') {
+    // 手繪：反向外殼描邊（只作用在 toon 材質）＋柔和泛光＋紙紋
+    const sp: any = toonOutlinePass(scene, camera, new THREE.Color('#2a1d2e'), 0.0032, 0.95);
+    let col: any = sp;
+    if (c.bloom) { bloomNode = bloom(sp, 0.35, 0.35, 0.85); bloomNode.setResolutionScale(c.bloom); col = col.add(bloomNode); }
+    pipeline.outputNode = toonGrade(col);
+    return;
+  }
+  // HD-2D：PBR 場景＋景深（移軸感）＋強泛光
   const scenePass = pass(scene, camera);
   if (c.ao && aoOk) {
     try {
@@ -70,10 +82,17 @@ function buildPost() {
       (scenePass as any).contextNode = builtinAOContext(aoPass.getTextureNode().sample(screenUV).r);
     } catch (e) { aoOk = false; console.warn('AO 停用', e); }
   }
-  const col = scenePass.getTextureNode('output');
-  if (c.bloom) { bloomNode = bloom(col, 0.55, 0.45, 0.85); bloomNode.setResolutionScale(c.bloom); pipeline.outputNode = col.add(bloomNode); }
-  else pipeline.outputNode = col;
+  let col: any = scenePass.getTextureNode('output');
+  if (tier !== 'perf') col = dof(col, scenePass.getViewZNode(), focus, uniform(5.5), uniform(tier === 'high' ? 1.5 : 1.1));
+  if (c.bloom) { bloomNode = bloom(scenePass.getTextureNode('output'), 0.7, 0.5, 0.75); bloomNode.setResolutionScale(c.bloom); col = col.add(bloomNode); }
+  pipeline.outputNode = hd2dGrade(col);
 }
+function applyStyle() {
+  store.set('style', style); hideSprites();
+  setSpriteRes(tier === 'high' ? 96 : tier === 'balanced' ? 80 : 64);
+  buildPost(); hud();
+}
+void output;
 
 function applyTier() {
   const c = TIERS[tier];
@@ -81,13 +100,17 @@ function applyTier() {
   keyLight.castShadow = c.shadow > 0;
   renderer.shadowMap.type = THREE.PCFShadowMap; keyLight.shadow.radius = c.soft ? 4 : 1;
   if (c.shadow) { keyLight.shadow.mapSize.set(c.shadow, c.shadow); keyLight.shadow.map?.dispose(); (keyLight.shadow as any).map = null; }
-  fx.scale = c.particles; buildPool(); buildPost(); actors?.setBlob(!c.shadow); if (player) player.obj.userData.blob.visible = !c.shadow;
+  fx.scale = c.particles; buildPool(); setSpriteRes(tier === 'high' ? 96 : tier === 'balanced' ? 80 : 64); buildPost(); actors?.setBlob(!c.shadow); if (player) player.obj.userData.blob.visible = !c.shadow;
   onResize(); store.set('tier', tier); hud();
 }
 
 // ---------------- 模擬 ----------------
 const bot = mkBot(0.8, { headless: true });
-function newSim() { const run = newRun('knight', 'easy', (Number(Q.get('seed')) || 20261116) >>> 0); startRun(run); }
+function newSim() {
+  const run = newRun('knight', 'easy', (Number(Q.get('seed')) || 20261116) >>> 0); startRun(run);
+  // 直接進一間有障礙物與敵人的戰鬥房，風格比較才有東西看
+  const c = W.floor.rooms.find((r: any) => r.type === 'combat' && r.dist === 1) || W.floor.rooms.find((r: any) => r.type === 'combat'); if (c) enterRoom(c.id);
+}
 newSim();
 const keys: Record<string, boolean> = {}, stick = { x: 0, y: 0, on: false, id: -1, ox: 0, oy: 0 };
 let manualT = 0; // 最近一次手動輸入後的秒數
@@ -121,7 +144,7 @@ function rebuild() {
   roomView = buildRoomView(W.room, route, k); scene.add(roomView.group);
   actors = new Actors(k); scene.add(actors.root); actors.setBlob(!TIERS[tier].shadow);
   player = makePlayer(k); scene.add(player.obj); player.obj.userData.blob.visible = !TIERS[tier].shadow;
-  const pal = W.room.biome.pal; scene.background = new THREE.Color(pal.bg); scene.fog = new THREE.FogExp2(pal.bg, 0.016);
+  scene.background = new THREE.Color('#8fb0d0'); scene.fog = new THREE.FogExp2('#9fbad4', 0.006); // 明亮調性
   curRoom = W.room; camTarget.set(W.p.x / T, 0, W.p.y / T);
 }
 async function setRoute(r: Route) {
@@ -152,7 +175,7 @@ function onResize() {
 addEventListener('resize', onResize);
 function updCamera(dt: number) {
   const px = W.p.x / T, pz = W.p.y / T, k = 1 - Math.exp(-dt * 6);
-  const dist = 17 * Math.max(1, 1.5 / camera.aspect), halfW = dist * Math.tan(15 * Math.PI / 180) * camera.aspect;
+  const dist = 19 * Math.max(1, 1.5 / camera.aspect), halfW = dist * Math.tan(15 * Math.PI / 180) * camera.aspect;
   const tx = RW > halfW * 2 ? Math.min(RW - halfW + 0.5, Math.max(halfW - 0.5, px)) : RW / 2;
   const tz = Math.min(RH - 4, Math.max(4, pz));
   camTarget.x += (tx - camTarget.x) * k; camTarget.z += (tz - camTarget.z) * k;
@@ -164,8 +187,8 @@ const tmpV = new THREE.Vector3();
 function updLights(t: number) {
   const p = W.p, px = p.x / T, pz = p.y / T;
   const lan = player!.lantern.getWorldPosition(tmpV);
-  keyLight.position.set(px - 0.3, 4.2, pz + 0.6); keyLight.target.position.set(px, 0, pz); keyLight.intensity = 68 + Math.sin(t * 7) * 4 + Math.sin(t * 17) * 2; moon.target.position.set(px, 0, pz); moon.position.set(px - 4, 10, pz + 6);
-  const srcs: (LightSrc & { s?: number })[] = [{ x: lan.x, y: lan.y + 0.1, z: lan.z, col: new THREE.Color('#ffc27a'), int: 9, dist: 9, flicker: 0.15, on: () => true, prio: 9 }];
+  keyLight.position.set(px - 0.3, 4.2, pz + 0.6); keyLight.target.position.set(px, 0, pz); keyLight.intensity = 30 + Math.sin(t * 7) * 2 + Math.sin(t * 17) * 1; moon.target.position.set(px, 0, pz); moon.position.set(px - 4, 10, pz + 6);
+  const srcs: (LightSrc & { s?: number })[] = [{ x: lan.x, y: lan.y + 0.1, z: lan.z, col: new THREE.Color('#ffc27a'), int: 6, dist: 8, flicker: 0.15, on: () => true, prio: 9 }];
   for (const w of wisps) { srcs.push(w); }
   for (const s of roomView!.lights) if (s.on()) srcs.push(s);
   for (const s of srcs) s.s = s.prio * 4 - Math.hypot(s.x - camTarget.x, s.z - camTarget.z);
@@ -222,7 +245,7 @@ function report() {
   return [
     `亡者之塔 視覺原型 回報`,
     `裝置：${navigator.userAgent}`,
-    `後端：${b}｜畫質：${c.name}｜資產：${route === 'kaykit' ? 'KayKit' : '程序化'}｜自動降級：${autoDown ? '開' : '關'}`,
+    `風格：${STYLE_NAME[style]}｜後端：${b}｜畫質：${c.name}｜資產：${route === 'kaykit' ? 'KayKit' : '程序化'}｜自動降級：${autoDown ? '開' : '關'}`,
     `畫面：${innerWidth}×${innerHeight} ×${renderer.getPixelRatio()}`,
     `首次載入：${(loadMs / 1000).toFixed(2)} s｜${kayInfo || 'KayKit 未載入'}｜離線：${swState}`,
     `測試時長：${fmtT()}｜換房 ${S_TRANS.n} 次（黑幕最長 ${S_TRANS.worst.toFixed(0)} ms，不計入 fps）｜長暫停 ${S.pauses} 次`,
@@ -239,18 +262,20 @@ function hud() {
     `${S.lastFps.toFixed(0)} fps  平均 ${avg.toFixed(1)}  最低 ${S.minSec < 1e9 ? S.minSec.toFixed(0) : '-'}\n` +
     `幀 ${(S.sum / Math.max(1, S.frames)).toFixed(1)} ms  99% ${p99().toFixed(1)}  CPU ${S.cpu.toFixed(1)}\n` +
     `DC ${S.dc}  △ ${(S.tri / 1000).toFixed(1)}k  粒子 ${fx.alive}\n` +
-    `${b}｜${c.name}｜${route === 'kaykit' ? 'KayKit' : '程序化'}｜${fmtT()}\n` +
+    `${STYLE_NAME[style]}｜${b}｜${c.name}｜${fmtT()}\n` +
     `載入 ${(loadMs / 1000).toFixed(2)} s｜離線 ${swState}${kayInfo ? '\n' + kayInfo : ''}${S.log.length ? '\n降級 ' + S.log[S.log.length - 1] : ''}`;
   document.querySelectorAll<HTMLButtonElement>('[data-q]').forEach((e) => e.classList.toggle('on', e.dataset.q === tier));
   document.querySelectorAll<HTMLButtonElement>('[data-r]').forEach((e) => e.classList.toggle('on', e.dataset.r === route));
   document.querySelectorAll<HTMLButtonElement>('[data-api]').forEach((e) => e.classList.toggle('on', (e.dataset.api === 'webgl') === (b !== 'WebGPU')));
   $('#auto').classList.toggle('on', autoDown);
+  document.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((e) => e.classList.toggle('on', e.dataset.s === style));
 }
 
 // ---------------- 按鈕 ----------------
 document.querySelectorAll<HTMLButtonElement>('[data-q]').forEach((e) => e.onclick = () => { tier = e.dataset.q as Tier; applyTier(); resetStats(); });
 document.querySelectorAll<HTMLButtonElement>('[data-r]').forEach((e) => e.onclick = () => { setRoute(e.dataset.r as Route).then(() => { resetStats(); S_TRANS.n = 0; S_TRANS.worst = 0; }); });
 document.querySelectorAll<HTMLButtonElement>('[data-api]').forEach((e) => e.onclick = () => { store.set('api', e.dataset.api!); if (Q.has('api')) { const u = new URL(location.href); u.searchParams.set('api', e.dataset.api!); location.href = u.href; } else location.reload(); });
+document.querySelectorAll<HTMLButtonElement>('[data-s]').forEach((e) => e.onclick = () => { style = e.dataset.s as Style; applyStyle(); resetStats(); });
 $('#auto').onclick = () => { autoDown = !autoDown; store.set('auto', autoDown ? '1' : '0'); hud(); };
 $('#reset').onclick = () => { resetStats(); S.log = []; S_TRANS.n = 0; S_TRANS.worst = 0; hud(); };
 $('#copy').onclick = async () => {
@@ -305,7 +330,12 @@ function frame(now: number) {
   for (const w of wisps) { w.a += dt * w.sp; w.x = w.cx + Math.cos(w.a) * w.r * 1.6; w.z = w.cz + Math.sin(w.a * 1.3) * w.r * 0.7; w.y = 1 + Math.sin(w.a * 3) * 0.3; w.mesh.position.set(w.x, w.y, w.z); }
   updCamera(dt); updLights(t);
   renderer.info.reset();
+  for (const g of [roomView!.group, actors!.root, player!.obj]) styleTree(g, style === 'toon' ? 'toon' : 'hd2d');
+  let hidden: THREE.Object3D[] = [];
+  if (style === 'hd2d') hidden = bakeSprites(renderer, scene, camera, [player!.obj, ...actors!.ens.values(), ...actors!.corpses.map((c) => c.g)]);
+  focus.value = camera.position.distanceTo(camTarget);
   if (pipeline) pipeline.render(); else renderer.render(scene, camera);
+  for (const m of hidden) m.visible = true;
   S.dc = renderer.info.render.drawCalls; S.tri = renderer.info.render.triangles; S.cpu = performance.now() - c0;
   if (!loadMs) { loadMs = performance.now(); $('#boot').style.display = 'none'; }
   if (skipStat) skipStat = false; else stat(dtMs);
@@ -321,4 +351,4 @@ if ('serviceWorker' in navigator && isSecureContext && !import.meta.env.DEV) {
 } else swState = import.meta.env.DEV ? '開發模式不啟用' : '不支援';
 
 main().catch((e) => { $('#boot').textContent = '啟動失敗：' + (e?.message || e); console.error(e); });
-(window as any).__proto = { W, renderer, report, setTier: (t: Tier) => { tier = t; applyTier(); }, setRoute };
+(window as any).__proto = { W, renderer, report, setTier: (t: Tier) => { tier = t; applyTier(); }, setRoute, setStyle: (s: Style) => { style = s; applyStyle(); }, camera };

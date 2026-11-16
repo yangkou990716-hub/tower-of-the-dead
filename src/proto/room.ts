@@ -35,7 +35,7 @@ export function mats(pal: any) {
     wood: new THREE.MeshStandardMaterial({ color: '#6b4a32', roughness: 0.85 }),
     glowCap: new THREE.MeshStandardMaterial({ color: '#1c3a36', emissive: pal.acc, emissiveIntensity: 2.4, roughness: 0.6 }),
     stem: new THREE.MeshStandardMaterial({ color: '#d8e6cf', emissive: '#2b6b5a', emissiveIntensity: 0.5, roughness: 0.8 }),
-    liquid: new THREE.MeshPhysicalMaterial({ color: '#3b6a64', roughness: 0.05, metalness: 0.3, normalMap: ripple, normalScale: new THREE.Vector2(0.35, 0.35), transparent: true, opacity: 0.7, depthWrite: false, clearcoat: 1, clearcoatRoughness: 0.05 }),
+    liquid: new THREE.MeshPhysicalMaterial({ color: '#63c8dc', emissive: '#1f7f95', emissiveIntensity: 0.6, roughness: 0.05, metalness: 0.1, normalMap: ripple, normalScale: new THREE.Vector2(0.35, 0.35), transparent: true, opacity: 0.7, depthWrite: false, clearcoat: 1, clearcoatRoughness: 0.05 }),
     fire: new THREE.MeshBasicMaterial({ color: new THREE.Color(4.0, 1.6, 0.45), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
     ember: new THREE.MeshStandardMaterial({ color: '#2a1a12', emissive: '#ff6a20', emissiveIntensity: 1.2, roughness: 0.9 }),
     shadow: new THREE.MeshBasicMaterial({ color: '#000', alphaMap: softDisc(0.2, 0.75), transparent: true, depthWrite: false, opacity: 0.8 }),
