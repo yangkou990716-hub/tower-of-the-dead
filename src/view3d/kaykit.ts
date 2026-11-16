@@ -4,6 +4,9 @@ import * as THREE from 'three/webgpu';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { DIR, modelFiles } from './manifest';
 
+/** 與 vite.config.ts 的 runtimeCaching cacheName 相同。 */
+export const MODEL_CACHE = 'tower-models';
+
 export interface Kay {
   /** 同一模型大量擺放（地板、牆）：每個子網格一個 InstancedMesh。 */
   inst(key: string, ms: THREE.Matrix4[], cast: boolean, recv: boolean): THREE.InstancedMesh[];
@@ -21,7 +24,9 @@ export async function loadKay(base: string, onProg: (done: number, total: number
   let done = 0, bytes = 0;
   const got: Record<string, GLTF> = {};
   await Promise.all(all.map(async (k) => {
-    const res = await fetch(`${base}${DIR}${k}${ext}`); if (!res.ok) throw new Error(`${k}: HTTP ${res.status}`);
+    const url = `${base}${DIR}${k}${ext}`, res = await fetch(url); if (!res.ok) throw new Error(`${k}: HTTP ${res.status}`);
+    // 第一次造訪時 Service Worker 還沒接管頁面，這次下載不會經過它的執行期快取 → 自己寫進同一個快取，之後才能離線
+    if (typeof caches !== 'undefined') { const copy = res.clone(); caches.open(MODEL_CACHE).then(async (c) => { if (!(await c.match(url))) await c.put(url, copy); }).catch(() => {}); }
     const buf = await res.arrayBuffer(); bytes += buf.byteLength;
     got[k] = await loader.parseAsync(buf, `${base}${DIR}`);
     onProg(++done, all.length);
