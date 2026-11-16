@@ -1,7 +1,7 @@
 // 特效：GPU 實例化粒子（CPU 模擬）、地面出招提示、投射物、揮砍弧。
 import * as THREE from 'three/webgpu';
 import { instancedBufferAttribute, uv, float, vec4, color, uniform, smoothstep, mix } from 'three/tsl';
-export const FXC = { scene: null as any as THREE.Scene, particles: 1 };
+export const FXC = { scene: null as any as THREE.Scene, particles: 1, cap: 2400, noParticles: false, noTele: false, instShots: false };
 const G = { get scene() { return FXC.scene; } };
 
 // ---------- 粒子 ----------
@@ -24,9 +24,11 @@ export function initFx() {
 }
 const tmpC = new THREE.Color();
 export function emit(n: number, o: { x: number; y: number; z: number; c: string; spd?: [number, number]; up?: number; life?: [number, number]; s?: [number, number]; grav?: number; drag?: number; a?: number; spread?: number; dir?: number; jit?: number }) {
+  if (FXC.noParticles) return;
   n = Math.max(1, Math.round(n * FXC.particles));
   tmpC.set(o.c);
-  for (let i = 0; i < n && ps.length < N; i++) {
+  const cap = Math.min(N, FXC.cap);
+  for (let i = 0; i < n && ps.length < cap; i++) {
     const sp = o.spd ? o.spd[0] + Math.random() * (o.spd[1] - o.spd[0]) : 1;
     const ang = o.dir !== undefined ? o.dir + (Math.random() - 0.5) * (o.spread ?? 1) : Math.random() * Math.PI * 2;
     const j = o.jit ?? 0;
@@ -48,7 +50,7 @@ export function updFx(dt: number) {
     ca[n * 4] = p.r * 2.2; ca[n * 4 + 1] = p.g * 2.2; ca[n * 4 + 2] = p.b * 2.2; ca[n * 4 + 3] = p.a * Math.min(1, k * 2.5) * Math.min(1, p.age * 30);
     sa[n] = p.s0 + (p.s1 - p.s0) * t; n++;
   }
-  (sprite as any).count = n;
+  (sprite as any).count = n; sprite.visible = n > 0 && !FXC.noParticles;
   pos.needsUpdate = true; col.needsUpdate = true; siz.needsUpdate = true;
   pos.clearUpdateRanges(); col.clearUpdateRanges(); siz.clearUpdateRanges();
   pos.addUpdateRange(0, n * 3); col.addUpdateRange(0, n * 4); siz.addUpdateRange(0, n);
@@ -84,7 +86,7 @@ function rect(len: number, w: number) {
   if (!g) { g = new THREE.PlaneGeometry(len, w); g.translate(len / 2, 0, 0); g.rotateX(-Math.PI / 2); geoCache.set(k, g); }
   return g;
 }
-let teleI = 0;
+let teleI = 0, teleN = 0;
 export function teleBegin() { teleI = 0; }
 /** 畫一個提示：shape 'sector'|'circle'|'rect'；p = 進度 0..1 */
 export function teleDraw(shape: string, x: number, z: number, ang: number, a: number, b: number, p: number, parry: boolean) {
@@ -97,21 +99,34 @@ export function teleDraw(shape: string, x: number, z: number, ang: number, a: nu
   t.mesh.rotation.y = -ang; t.fill.rotation.y = -ang;
   if (shape === 'rect') t.fill.scale.set(Math.max(0.01, p), 1, 1); else t.fill.scale.setScalar(Math.max(0.01, p));
   t.u.value = 0.22; t.uf.value = 0.35 + p * 0.3;
-  t.mesh.visible = t.fill.visible = true;
+  t.mesh.visible = t.fill.visible = !FXC.noTele;
 }
-export function teleEnd() { for (let i = teleI; i < tele.length; i++) tele[i].mesh.visible = tele[i].fill.visible = false; }
+export function teleEnd() {
+  if (FXC.noTele) teleI = 0; for (let i = teleI; i < tele.length; i++) tele[i].mesh.visible = tele[i].fill.visible = false; }
 
 // ---------- 投射物 ----------
 const shotPool: THREE.Mesh[] = []; const shotGeo = new THREE.SphereGeometry(1, 10, 8);
 const shotMats = new Map<string, THREE.Material>();
 let shotI = 0;
-export function shotsBegin() { shotI = 0; }
+let shotIM: THREE.InstancedMesh | null = null, shotN = 0;
+const _m = new THREE.Matrix4(), _c = new THREE.Color();
+export function shotsBegin() { shotI = 0; shotN = 0; }
 export function shotDraw(x: number, z: number, r: number, c: string) {
+  if (FXC.instShots) { // 所有彈幕合成 1 次 draw call
+    if (!shotIM) { const mm = new THREE.MeshBasicNodeMaterial(); shotIM = new THREE.InstancedMesh(shotGeo, mm, 256); shotIM.frustumCulled = false; shotIM.count = 0; shotIM.setColorAt(0, _c.set(1, 1, 1)); G.scene.add(shotIM); }
+    if (shotN >= 256) return; const k = Math.max(0.09, r);
+    _m.makeScale(k, k, k).setPosition(x, 0.7, z); shotIM.setMatrixAt(shotN, _m); shotIM.setColorAt(shotN, _c.set(c).multiplyScalar(3)); shotN++; return;
+  }
   let m = shotMats.get(c); if (!m) { const mm = new THREE.MeshBasicNodeMaterial(); mm.colorNode = color(c).mul(3); m = mm; shotMats.set(c, m); }
   let s = shotPool[shotI++]; if (!s) { s = new THREE.Mesh(shotGeo, m); s.userData.keep = true; G.scene.add(s); shotPool.push(s); }
   s.material = m; s.visible = true; s.position.set(x, 0.7, z); s.scale.setScalar(Math.max(0.09, r));
 }
-export function shotsEnd() { for (let i = shotI; i < shotPool.length; i++) shotPool[i].visible = false; }
+export function shotsEnd() {
+  for (let i = shotI; i < shotPool.length; i++) shotPool[i].visible = false;
+  if (shotIM) { shotIM.count = shotN; shotIM.instanceMatrix.needsUpdate = true; if (shotIM.instanceColor) shotIM.instanceColor.needsUpdate = true; }
+}
+export function fxStats() { return { parts: ps.length, tele: FXC.noTele ? 0 : teleI, shots: FXC.instShots ? shotN : shotI, arcs: arcs.length }; }
+void teleN;
 
 // ---------- 揮砍弧：沿弧線由亮到暗的刀光（頭亮尾淡、內緣透明） ----------
 interface Arc { m: THREE.Mesh; t: number; d: number; }

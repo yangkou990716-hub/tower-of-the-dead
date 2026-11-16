@@ -5,7 +5,7 @@ import * as THREE from 'three/webgpu';
 import { pass, vec3, vec4, float, mix, smoothstep, length, screenUV, luminance, uniform } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { W, emptyInput, InputState } from '../sim/state';
-import { newRun, startRun, step, calcStats, mkEnemy, mkPlayer } from '../sim/combat';
+import { newRun, startRun, step, calcStats, mkEnemy, mkPlayer, mkShot, mkHaz } from '../sim/combat';
 import { buildRoom } from '../sim/world';
 import { T, RW, RH } from '../sim/util';
 import { Snd } from '../platform/audio';
@@ -29,7 +29,7 @@ let tier: Tier = (Q.get('q') as Tier) || (store.get('tier') as Tier) || 'bal'; i
 const wantGL = Q.get('api') === 'webgl' || (Q.get('api') == null && store.get('api') === 'webgl');
 
 // ---------------- 渲染器與場景 ----------------
-const renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: wantGL, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGPURenderer({ antialias: true, forceWebGL: wantGL, powerPreference: 'high-performance', trackTimestamp: true } as any);
 renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.info.autoReset = false;
@@ -56,7 +56,7 @@ function buildPost() {
   pipeline = new THREE.RenderPipeline(renderer);
   const sp = pass(scene, camera);
   let c: any = sp.getTextureNode('output');
-  if (TIERS[tier].bloom) { const b: any = bloom(c, 0.32, 0.45, 0.88); b.setResolutionScale(TIERS[tier].bloom); c = c.add(b); }
+  if (TIERS[tier].bloom && !DIAG.noBloom) { const b: any = bloom(c, 0.32, 0.45, 0.88); b.setResolutionScale(TIERS[tier].bloom); c = c.add(b); }
   let o: any = vec3(c.rgb);
   const l = luminance(o);
   o = mix(vec3(l), o, 1.18);                                                   // 稍微提高飽和
@@ -170,7 +170,7 @@ function syncEnemies(dt: number) {
   const seen = new Set<number>();
   for (const e of W.ents) {
     let a = actors.get(e.uid);
-    if (!a) { a = new Actor(e.id === 'matriarch' ? 'matriarch' : 'slime'); scene.add(a.root); actors.set(e.uid, a); }
+    if (!a) { a = new Actor(e.id === 'matriarch' ? 'matriarch' : 'slime'); if (OPT.on && a.kind === 'slime') a.model.traverse((o: any) => { if (o.isMesh) o.castShadow = false; }); scene.add(a.root); actors.set(e.uid, a); }
     seen.add(e.uid); a.set(e.x, e.y, e.a); enemyAnim(a, e);
     // 前搖時身體微微脹大、泛紅：出招提示
     const wind = e.state === 'wind' ? 1 - e.t / e.tw : 0;
@@ -240,18 +240,20 @@ function onEv(e: any) {
     case 'charged': FX.ring(px(W.p.x), px(W.p.y), e.full ? 1.5 : 1.0, e.full ? '#ffffff' : '#ffd27a', 0.28); FX.emit(e.full ? 20 : 10, { x: px(W.p.x), y: 0.8, z: px(W.p.y), c: '#ffd27a', spd: [1, 3], up: 2, life: [0.3, 0.6], s: [0.15, 0] }); break;
     case 'healfx': FX.emit(20, { x: px(e.x), y: 0.3, z: px(e.y), c: '#9affb8', spd: [0.3, 1.2], up: 3, life: [0.6, 1.0], s: [0.2, 0], drag: 1 }); break;
     case 'stag': FX.emit(8, { x: px(e.e.x), y: 2, z: px(e.e.y), c: '#fff0a0', spd: [1, 3], up: 1, life: [0.4, 0.8], s: [0.22, 0] }); break;
-    case 'phase': FX.ring(px(e.e.x), px(e.e.y), 8, '#ff7fd0', 1.0); flashU.value = 0.5; shake = 14; toast(e.e.phase === 2 ? '蘑菇王 狂暴化' : '蘑菇王 憤怒了'); break;
+    case 'summon': markEv('召喚'); break;
+    case 'phase': markEv('換階段'); FX.ring(px(e.e.x), px(e.e.y), 8, '#ff7fd0', 1.0); flashU.value = 0.5; shake = 14; toast(e.e.phase === 2 ? '蘑菇王 狂暴化' : '蘑菇王 憤怒了'); break;
   }
 }
 
 // ---------------- 環境粒子 ----------------
 let fxAcc = 0;
+let trailTick = 0;
 function ambient(dt: number, t: number) {
-  fxAcc += dt; if (fxAcc < 1 / 30) return; const k = fxAcc * 30; fxAcc = 0;
+  fxAcc += dt; if (fxAcc < 1 / 30) return; const k = fxAcc * 30; fxAcc = 0; trailTick++;
   const cx = camTarget.x, cz = camTarget.z;
   if (Math.random() < 0.9 * k) FX.emit(1, { x: cx + (Math.random() - 0.5) * 24, y: 0.3 + Math.random() * 2.2, z: cz + (Math.random() - 0.5) * 14, c: Math.random() < 0.5 ? '#ffe9a0' : '#a8fff0', spd: [0.05, 0.25], up: 0.12, life: [2.5, 5], s: [0.07, 0.07], a: 0.9, drag: 0.2, grav: -0.02 });
   if (Math.random() < 0.6 * k) { const a = t * 1.7, r = 1.2 + Math.random() * 0.8; FX.emit(1, { x: CX + Math.cos(a) * r, y: 2.3 + Math.sin(a) * r, z: -0.4, c: '#c9a8ff', spd: [0.1, 0.4], up: 0.3, life: [1, 2], s: [0.12, 0], drag: 0.5 }); }
-  for (const s of W.shots) if (s.from === 'e') FX.emit(1, { x: s.x / T, y: 0.75, z: s.y / T, c: s.col || '#ff9ad8', spd: [0, 0.2], life: [0.2, 0.35], s: [0.22, 0], drag: 2 });
+  let si = 0; for (const s of W.shots) if (s.from === 'e' && (!OPT.on || (si++ + trailTick) % 3 === 0)) FX.emit(1, { x: s.x / T, y: 0.75, z: s.y / T, c: s.col || '#ff9ad8', spd: [0, 0.2], life: [0.2, 0.35], s: [0.22, 0], drag: 2 });
   const b = W.boss && !W.boss.dead ? W.boss : null;
   if (b && Math.random() < 0.5 * k) FX.emit(1, { x: b.x / T + (Math.random() - 0.5) * 1.6, y: 2.6 + Math.random(), z: b.y / T + (Math.random() - 0.5) * 1.6, c: '#ff9ad8', spd: [0.1, 0.4], up: 0.6, life: [1, 1.8], s: [0.12, 0], drag: 0.6 });
 }
@@ -288,15 +290,26 @@ function stats() {
   const be = (renderer.backend as any).isWebGPUBackend ? 'WebGPU' : 'WebGL 2', c = TIERS[tier];
   $('#stats').textContent = `${S.fps.toFixed(0)} fps  平均 ${(S.n ? 1000 / (S.sum / S.n) : 0).toFixed(1)}  最低 ${S.minF < 1e9 ? S.minF.toFixed(0) : '-'}\n` +
     `幀 ${(S.n ? S.sum / S.n : 0).toFixed(1)} ms  最慢 ${S.worst.toFixed(0)} ms  卡頓 ${S.hitch}  CPU ${S.cpu.toFixed(1)}\n` +
-    `draw calls ${S.dc}  三角形 ${(S.tri / 1000).toFixed(0)}k  草 ${env.grass.count}\n${be}｜${c.name}｜${innerWidth}×${innerHeight}×${renderer.getPixelRatio()}`;
+    `draw calls ${S.dc}  三角形 ${(S.tri / 1000).toFixed(0)}k  草 ${env.grass.count}  粒子 ${FX.fxStats().parts}  GPU ${gpuMs > 0 ? gpuMs.toFixed(1) + ' ms' : '不可得'}\n${be}｜${c.name}｜${innerWidth}×${innerHeight}×${renderer.getPixelRatio()}`;
   document.querySelectorAll<HTMLElement>('[data-q]').forEach((e) => e.classList.toggle('on', e.dataset.q === tier));
+  $('#opt').classList.toggle('on', OPT.on); $('#bench').textContent = bench ? `測試中 ${bench.i + 1}/${BENCH.length}：${BENCH[bench.i].n}` : benchDone ? '重跑基準測試' : '基準測試（約 95 秒）';
   document.querySelectorAll<HTMLElement>('[data-api]').forEach((e) => e.classList.toggle('on', (e.dataset.api === 'webgl') === (be !== 'WebGPU')));
 }
 function report() {
-  const be = (renderer.backend as any).isWebGPUBackend ? 'WebGPU' : 'WebGL 2', s = (performance.now() - S.t0) / 1000;
-  return [`亡者之塔 展示場景 回報`, `裝置：${navigator.userAgent}`, `後端：${be}｜畫質：${TIERS[tier].name}｜畫面 ${innerWidth}×${innerHeight}×${renderer.getPixelRatio()}`,
-    `測試 ${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}｜平均 ${(S.n ? 1000 / (S.sum / S.n) : 0).toFixed(1)} fps｜最低 1 秒 ${S.minF < 1e9 ? S.minF.toFixed(0) : '-'} fps｜最慢一幀 ${S.worst.toFixed(0)} ms｜卡頓（>100 ms）${S.hitch} 次`,
-    `draw calls ${S.dc}｜三角形 ${(S.tri / 1000).toFixed(0)}k｜草 ${env.grass.count} 叢`].join('\n');
+  const be = (renderer.backend as any).isWebGPUBackend ? 'WebGPU' : 'WebGL 2', sec = (performance.now() - S.t0) / 1000, cv = renderer.domElement;
+  const L = [`亡者之塔 展示場景 回報（診斷版）`, `裝置：${navigator.userAgent}`,
+    `後端：${be}｜畫質：${TIERS[tier].name}｜最佳化：${OPT.on ? '開' : '關'}｜GPU 計時：${gpuOK ? '可用（timestamp-query）' : '不可得（瀏覽器未提供 timestamp-query）'}`,
+    `解析度：CSS ${innerWidth}×${innerHeight}｜裝置像素比 ${devicePixelRatio}｜渲染倍率 ${renderer.getPixelRatio()}｜實際繪製 ${cv.width}×${cv.height}（${(cv.width * cv.height / 1e6).toFixed(2)} MP）`,
+    `自由遊玩 ${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}｜平均 ${(S.n ? 1000 / (S.sum / S.n) : 0).toFixed(1)} fps｜最低 1 秒 ${S.minF < 1e9 ? S.minF.toFixed(0) : '-'} fps｜最慢一幀 ${S.worst.toFixed(0)} ms｜卡頓（>100 ms）${S.hitch} 次`];
+  const free = secs.filter((x) => !x.stage);
+  if (free.length) {
+    L.push('', '【自由遊玩：最慢的 5 秒】');
+    for (const x of [...free].sort((a, b) => a.fps - b.fps).slice(0, 5)) L.push(fmtSec(x));
+    L.push('', '【自由遊玩：平常 vs 戰鬥高峰】', '平常：' + fmtAvg(avgOf(free.filter((x) => !isPeak(x)))), '高峰：' + fmtAvg(avgOf(free.filter(isPeak))));
+  }
+  if (benchDone) { L.push('', '【基準測試（同一劇本）】'); for (const r of benchDone) L.push(`${r.n}：${fmtAvg(r.a)}`); }
+  else L.push('', '（尚未跑基準測試）');
+  return L.join('\n');
 }
 function resetStats() { Object.assign(S, { hitch: 0, frames: 0, t: 0, sum: 0, n: 0, worst: 0, minF: 1e9, t0: performance.now() }); }
 
@@ -309,14 +322,123 @@ function applyTier() {
   sun.shadow.radius = tier === 'perf' ? 1 : 3;
   if (lantern.castShadow !== c.lanternShadow) { lantern.castShadow = c.lanternShadow; lantern.shadow.map?.dispose(); (lantern.shadow as any).map = null; }
   if (env) env.grass.count = Math.round(grassMax * c.grass);
-  FX.FXC.particles = c.particles;
+  FX.FXC.particles = c.particles; applyOpt();
   store.set('tier', tier); onResize(); buildPost(); resetStats();
 }
 document.querySelectorAll<HTMLElement>('[data-q]').forEach((e) => e.onclick = () => { tier = e.dataset.q as Tier; applyTier(); });
 document.querySelectorAll<HTMLElement>('[data-api]').forEach((e) => e.onclick = () => { store.set('api', e.dataset.api!); const u = new URL(location.href); u.searchParams.delete('api'); location.href = u.href; });
 $('#panel-t').onclick = () => document.body.classList.toggle('mini');
+$('#bench').onclick = () => startBench();
+$('#opt').onclick = () => { OPT.on = !OPT.on; applyOpt(); resetStats(); stats(); };
 $('#copy').onclick = async () => { const t = report(); let ok = false; try { await navigator.clipboard.writeText(t); ok = true; } catch { /* 不給剪貼簿 */ } const b = $('#report'); (b.querySelector('textarea') as HTMLTextAreaElement).value = t; b.style.display = 'flex'; ($('#report b') as HTMLElement).textContent = ok ? '已複製，貼給 Claude 即可' : '請長按全選後複製'; };
 $('#report button').onclick = () => { $('#report').style.display = 'none'; };
+
+// ---------------- 效能診斷 ----------------
+// CPU：update＝模擬＋動畫＋特效（JS 實測）；submit＝建立並送出繪圖指令（JS 實測）。
+// GPU：只有瀏覽器提供 WebGPU timestamp-query 時才是實測；否則顯示「不可得」，GPU 負擔只能用「關掉某效果後 fps 的變化」推測。
+const OPT = { on: store.get('opt') !== '0' };
+const DIAG = { noBloom: false, noPost: false, hidden: [] as THREE.Object3D[] };
+const PCAP: Record<Tier, number> = { high: 1600, bal: 1000, perf: 500 };
+function applyOpt() {
+  FX.FXC.instShots = OPT.on; FX.FXC.cap = OPT.on ? PCAP[tier] : 2400;
+  for (const a of actors.values()) if (a.kind === 'slime') a.model.traverse((o: any) => { if (o.isMesh) o.castShadow = !OPT.on; });
+  store.set('opt', OPT.on ? '1' : '0');
+}
+interface Sec { fps: number; worst: number; upd: number; sub: number; gpu: number; dc: number; tri: number; ents: number; shots: number; parts: number; tele: number; haz: number; evs: string[]; stage: string }
+const secs: Sec[] = [];
+const newAcc = () => ({ n: 0, ms: 0, worst: 0, upd: 0, sub: 0, gpu: 0, gn: 0, dc: 0, tri: 0, ents: 0, shots: 0, parts: 0, tele: 0, haz: 0, evs: new Set<string>() });
+let acc = newAcc();
+let lastBossAtk = '';
+function sample(real: number, upd: number, sub: number) {
+  const f = FX.fxStats();
+  acc.n++; acc.ms += real; acc.worst = Math.max(acc.worst, real); acc.upd += upd; acc.sub += sub;
+  if (gpuMs > 0) { acc.gpu += gpuMs; acc.gn++; }
+  acc.dc = Math.max(acc.dc, S.dc); acc.tri = Math.max(acc.tri, S.tri); acc.ents = Math.max(acc.ents, W.ents.length); acc.shots = Math.max(acc.shots, W.shots.length);
+  acc.parts = Math.max(acc.parts, f.parts); acc.tele = Math.max(acc.tele, f.tele); acc.haz = Math.max(acc.haz, W.haz.length);
+  const b = W.boss && !W.boss.dead ? W.boss : null, ba = b && (b.state === 'wind' || b.state === 'act') ? (b.atk?.t || '') : '';
+  if (ba && ba !== lastBossAtk) acc.evs.add('Boss:' + ba); lastBossAtk = ba;
+  if (acc.ms >= 1000) {
+    const sec: Sec = { fps: acc.n * 1000 / acc.ms, worst: acc.worst, upd: acc.upd / acc.n, sub: acc.sub / acc.n, gpu: acc.gn ? acc.gpu / acc.gn : -1, dc: acc.dc, tri: acc.tri, ents: acc.ents, shots: acc.shots, parts: acc.parts, tele: acc.tele, haz: acc.haz, evs: [...acc.evs], stage: bench ? BENCH[bench.i].n : '' };
+    if (performance.now() - S.t0 > 3000) { secs.push(sec); if (secs.length > 600) secs.shift(); }
+    if (bench && bench.t > 1.5) bench.secs.push(sec);
+    acc = newAcc();
+  }
+}
+const markEv = (k: string) => { acc.evs.add(k); };
+const fmtSec = (x: Sec) => `${x.fps.toFixed(0)} fps｜最慢 ${x.worst.toFixed(0)} ms｜CPU 更新 ${x.upd.toFixed(1)}＋提交 ${x.sub.toFixed(1)} ms｜GPU ${x.gpu > 0 ? x.gpu.toFixed(1) + ' ms' : '不可得'}｜DC ${x.dc}｜△ ${(x.tri / 1000).toFixed(0)}k｜敵 ${x.ents}｜彈 ${x.shots}｜粒子 ${x.parts}｜提示圈 ${x.tele}｜危害 ${x.haz}${x.evs.length ? '｜' + x.evs.join(',') : ''}`;
+const isPeak = (x: Sec) => x.shots >= 8 || x.ents >= 3 || x.parts >= 300 || x.tele >= 4;
+function avgOf(xs: Sec[]) {
+  if (!xs.length) return null;
+  const m = (k: 'fps' | 'upd' | 'sub' | 'dc' | 'tri' | 'parts' | 'shots') => xs.reduce((a, x) => a + x[k], 0) / xs.length;
+  const g = xs.filter((x) => x.gpu > 0);
+  return { n: xs.length, fps: m('fps'), min: Math.min(...xs.map((x) => x.fps)), worst: Math.max(...xs.map((x) => x.worst)), upd: m('upd'), sub: m('sub'), gpu: g.length ? g.reduce((a, x) => a + x.gpu, 0) / g.length : -1, dc: m('dc'), tri: m('tri'), parts: m('parts'), shots: m('shots') };
+}
+const fmtAvg = (a: ReturnType<typeof avgOf>) => a ? `${a.n} 秒｜平均 ${a.fps.toFixed(1)} fps｜最低 ${a.min.toFixed(0)}｜最慢 ${a.worst.toFixed(0)} ms｜CPU ${a.upd.toFixed(1)}＋${a.sub.toFixed(1)} ms｜GPU ${a.gpu > 0 ? a.gpu.toFixed(1) + ' ms' : '不可得'}｜DC ${a.dc.toFixed(0)}｜△ ${(a.tri / 1000).toFixed(0)}k｜粒子 ${a.parts.toFixed(0)}｜彈 ${a.shots.toFixed(0)}` : '無資料';
+
+// ---------------- 基準測試：同一場景、固定劇本 ----------------
+// 高峰＝模擬 Boss 第三階段最忙的時候：螺旋彈（每 0.13 秒 3 發）＋每 1.5 秒放射彈 14 發＋每 1.2 秒孢子雨 5 個落點＋維持 4 隻小怪；Boss 定住、主角不死、定點自動揮刀。
+type Off = '' | 'particles' | 'bloom' | 'shadow' | 'grass' | 'tele' | 'res' | 'post' | 'transp';
+const BENCH: { n: string; d: number; peak: boolean; opt: boolean; off: Off }[] = [
+  { n: '平常・修改前', d: 8, peak: false, opt: false, off: '' },
+  { n: '高峰・修改前', d: 10, peak: true, opt: false, off: '' },
+  { n: '高峰・關粒子', d: 7, peak: true, opt: false, off: 'particles' },
+  { n: '高峰・關泛光', d: 7, peak: true, opt: false, off: 'bloom' },
+  { n: '高峰・關陰影', d: 7, peak: true, opt: false, off: 'shadow' },
+  { n: '高峰・關草', d: 7, peak: true, opt: false, off: 'grass' },
+  { n: '高峰・關提示圈', d: 7, peak: true, opt: false, off: 'tele' },
+  { n: '高峰・解析度減半', d: 7, peak: true, opt: false, off: 'res' },
+  { n: '高峰・關整條後處理', d: 7, peak: true, opt: false, off: 'post' },
+  { n: '高峰・關全部半透明', d: 7, peak: true, opt: false, off: 'transp' },
+  { n: '高峰・修改後', d: 10, peak: true, opt: true, off: '' },
+  { n: '平常・修改後', d: 8, peak: false, opt: true, off: '' },
+];
+let bench: { i: number; t: number; secs: Sec[]; res: { n: string; a: ReturnType<typeof avgOf> }[]; k: Record<string, number>; optWas: boolean } | null = null;
+let benchDone: { n: string; a: ReturnType<typeof avgOf> }[] | null = null;
+function setOff(off: Off, on: boolean) {
+  switch (off) {
+    case 'particles': FX.FXC.noParticles = on; break;
+    case 'bloom': DIAG.noBloom = on; buildPost(); break;
+    case 'shadow': sun.castShadow = !on; break;
+    case 'grass': env.grass.visible = !on; break;
+    case 'tele': FX.FXC.noTele = on; break;
+    case 'post': DIAG.noPost = on; break;
+    case 'transp': FX.FXC.noParticles = on; FX.FXC.noTele = on; DIAG.hidden = []; if (on) scene.traverse((o: any) => { if (o.isMesh && o.visible && o.material?.transparent && o.renderOrder !== 8) DIAG.hidden.push(o); }); else DIAG.hidden.forEach((o) => o.visible = true); if (!on) DIAG.hidden = []; break;
+    case 'res': renderer.setPixelRatio(Math.min(TIERS[tier].pr, devicePixelRatio || 1) * (on ? 0.5 : 1)); onResize(); break;
+  }
+}
+function clearPeak() { for (const e of W.ents) if (!e.boss) e.dead = true; W.ents = W.ents.filter((e: any) => !e.dead); W.shots = []; W.haz = []; }
+function enterStage(i: number) {
+  const st = BENCH[i]; OPT.on = st.opt; applyOpt(); setOff(st.off, true);
+  if (!st.peak) clearPeak();
+  bench!.t = 0; bench!.secs = []; bench!.k = {}; acc = newAcc();
+}
+function startBench() {
+  if (bench) return; resetStats(); bench = { i: 0, t: 0, secs: [], res: [], k: {}, optWas: OPT.on }; toast('基準測試開始，請勿操作');
+  if (!W.ents.some((e: any) => e.boss)) spawnBoss();
+  enterStage(0);
+}
+function benchStep(dt: number) {
+  if (!bench) return;
+  const st = BENCH[bench.i], b = W.ents.find((e: any) => e.boss), run = W.run!, p = W.p;
+  bench.t += dt;
+  run.hp = W.ST.maxHp; p.dead = false; W.over = null; p.x = CX * T; p.y = (CZ + 2.6) * T;
+  if (b) { b.hp = b.mhp; b.state = 'stag'; b.t = 99; b.x = CX * T; b.y = (CZ - 1.8) * T; }
+  const K = bench.k;
+  if ((K.atk = (K.atk || 0) + dt) > 0.4) { K.atk = 0; q.attack = true; }
+  if (st.peak && b) {
+    const bx = b.x, by = b.y;
+    if ((K.rad = (K.rad || 0) + dt) > 1.5) { K.rad = 0; const o = Math.random() * 6.28; for (let i = 0; i < 14; i++) mkShot('e', bx, by, o + i * 6.283 / 14, 165, 1, { col: '#ffb86b', r: 6 }); }
+    if ((K.spi = (K.spi || 0) + dt) > 0.13) { K.spi = 0; K.sa = (K.sa || 0) + 0.33; for (let i = 0; i < 3; i++) mkShot('e', bx, by, K.sa + i * 2.094, 155, 1, { col: '#ff9ad8', r: 6 }); }
+    if ((K.rain = (K.rain || 0) + dt) > 1.2) { K.rain = 0; for (let i = 0; i < 5; i++) mkHaz({ k: 'blast', from: 'e', x: p.x + (Math.random() - 0.5) * 340, y: p.y - 40 + (Math.random() - 0.5) * 300, r: 54, t: 1.0 + i * 0.16, dmg: 1, col: '#ffb86b', puddle: 'poison' }); }
+    if (W.ents.filter((e: any) => !e.boss && !e.dead).length < 4) mkEnemy('slime', (CX + (Math.random() - 0.5) * 9) * T, (CZ + 1 + (Math.random() - 0.5) * 4) * T);
+  }
+  if (bench.t >= st.d) {
+    bench.res.push({ n: st.n, a: avgOf(bench.secs) }); setOff(st.off, false);
+    bench.i++;
+    if (bench.i >= BENCH.length) { benchDone = bench.res; OPT.on = bench.optWas; applyOpt(); bench = null; clearPeak(); toast('基準測試完成，請按「產生回報」'); stats(); return; }
+    enterStage(bench.i);
+  }
+}
 
 // ---------------- 主迴圈 ----------------
 let last = 0;
@@ -326,14 +448,22 @@ function frame(now: number) {
   const real = last ? now - last : 16.7; last = now;
   if (real > 1000) return; // 背景回來：不推進
   const c0 = performance.now(), dt = Math.min(0.05, real / 1000), t = now / 1000;
+  benchStep(dt);
   update(dt, t);
-  renderer.info.reset(); if (Q.has('raw')) renderer.render(scene, camera); else pipeline.render();
-  S.dc = renderer.info.render.drawCalls; S.tri = renderer.info.render.triangles; S.cpu = performance.now() - c0;
+  const c1 = performance.now();
+  renderer.info.reset(); if (DIAG.hidden.length) DIAG.hidden.forEach((o) => o.visible = false);
+  if (Q.has('raw') || DIAG.noPost) renderer.render(scene, camera); else pipeline.render();
+  if (DIAG.hidden.length) DIAG.hidden.forEach((o) => o.visible = true);
+  const c2 = performance.now();
+  S.dc = renderer.info.render.drawCalls; S.tri = renderer.info.render.triangles; S.cpu = c2 - c0;
+  if (gpuOK && (++gpuTick % 4 === 0) && !gpuBusy) { gpuBusy = true; renderer.resolveTimestampsAsync('render' as any).then((v: any) => { if (typeof v === 'number' && v > 0) gpuMs = v; gpuBusy = false; }).catch(() => { gpuBusy = false; }); }
+  sample(real, c1 - c0, c2 - c1);
   S.frames++; S.t += real; S.sum += real; S.n++; S.worst = Math.max(S.worst, real); if (real > 100 && performance.now() - S.t0 > 3000) S.hitch++;
   if (S.t >= 1000) { S.fps = S.frames * 1000 / S.t; if (performance.now() - S.t0 > 3000) S.minF = Math.min(S.minF, S.fps); S.frames = 0; S.t = 0; stats(); }
   hud();
 }
 let simT = 0;
+let gpuOK = false, gpuTick = 0, gpuBusy = false, gpuMs = -1;
 function update(dt: number, t: number) {
   simT = t;
   // 模擬
@@ -363,6 +493,7 @@ let respawnT = 0;
 
 async function main() {
   await renderer.init();
+  gpuOK = !!(renderer.backend as any).trackTimestamp && (renderer.backend as any).isWebGPUBackend;
   const bar = $('#boot i'), lp = $('#boot span');
   await loadChars(BASE, (f) => { bar.style.width = (f * 70).toFixed(0) + '%'; });
   lp.textContent = '生成場景…'; await new Promise((r) => setTimeout(r, 0));
@@ -389,4 +520,4 @@ async function main() {
   renderer.setAnimationLoop(frame);
 }
 main().catch((e) => { $('#boot span').textContent = '啟動失敗：' + (e?.message || e) + '（可在網址後加 ?api=webgl 再試）'; console.error(e); });
-(window as any).__show = { W, renderer, camera, scene, setTier: (t: Tier) => { tier = t; applyTier(); }, report, adv: (sec: number) => { for (let i = 0; i < sec * 30; i++) update(1 / 30, simT + 1 / 30); }, buildInput, RW, RH, mkPlayer };
+(window as any).__show = { W, renderer, camera, scene, setTier: (t: Tier) => { tier = t; applyTier(); }, report, adv: (sec: number) => { for (let i = 0; i < sec * 30; i++) { benchStep(1 / 30); update(1 / 30, simT + 1 / 30); } }, buildInput, startBench, bstate: () => bench && { i: bench.i, t: bench.t }, RW, RH, mkPlayer };
