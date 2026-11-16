@@ -12,12 +12,12 @@ export const DIFF: Record<string, any> = {
 
 // ---------- 武器 ----------
 export const KIND: Record<string, any> = {
-  sword: { n: '劍', cd: 0.34, sta: 11, rng: 74, arc: 2.0, hv: 2.3 },
-  dagger: { n: '匕首', cd: 0.2, sta: 6, rng: 54, arc: 1.4, hv: 2.1 },
-  spear: { n: '長槍', cd: 0.4, sta: 12, rng: 118, arc: 0.55, hv: 2.4 },
-  hammer: { n: '重錘', cd: 0.68, sta: 21, rng: 84, arc: 2.7, hv: 2.7, stag: 1 },
-  bow: { n: '弓', cd: 0.38, sta: 8, proj: 560, hv: 2.6 },
-  staff: { n: '法杖', cd: 0.46, sta: 10, proj: 400, hv: 2.4 },
+  sword: { n: '劍', cd: 0.3, sta: 9, rng: 74, arc: 2.0, hv: 2.3 },
+  dagger: { n: '匕首', cd: 0.19, sta: 5, rng: 54, arc: 1.4, hv: 2.1 },
+  spear: { n: '長槍', cd: 0.38, sta: 10, rng: 118, arc: 0.55, hv: 2.4 },
+  hammer: { n: '重錘', cd: 0.62, sta: 18, rng: 84, arc: 2.7, hv: 2.7, stag: 1 },
+  bow: { n: '弓', cd: 0.36, sta: 7, proj: 560, hv: 2.6 },
+  staff: { n: '法杖', cd: 0.44, sta: 8, proj: 400, hv: 2.4 },
 };
 export const WPN: Record<string, any> = {
   iron: { n: '鐵劍', k: 'sword', dmg: 14, t: 1, d: '平凡而可靠。無數亡者握過同樣的劍。' },
@@ -97,34 +97,34 @@ export const RELIC: Record<string, any> = {
 
 // ---------- 職業 ----------
 export const CLS: Record<string, any> = {
-  knight: { n: '騎士', hp: 120, sta: 100, spd: 150, wpn: 'iron', parry: 0.06, cost: 0, d: '重甲與盾。彈反的判定時間較寬，適合第一次入塔。',
+  knight: { n: '騎士', hp: 120, sta: 100, spd: 172, wpn: 'iron', parry: 0.06, cost: 0, d: '重甲與盾。彈反的判定時間較寬，適合第一次入塔。',
     sk: [{ n: '盾擊', cd: 8, d: '向前衝撞，沿途敵人失衡。衝撞中無敵。' }, { n: '戰吼', cd: 20, d: '8 秒內傷害 +30%、受傷 −30%，並震懾周圍敵人。' }] },
-  ranger: { n: '遊俠', hp: 92, sta: 105, spd: 160, wpn: 'bow1', cost: 60, d: '保持距離，以箭解決問題。',
+  ranger: { n: '遊俠', hp: 92, sta: 105, spd: 182, wpn: 'bow1', cost: 60, d: '保持距離，以箭解決問題。',
     sk: [{ n: '後躍射擊', cd: 6, d: '向後翻躍並射出三支箭。翻躍中無敵。' }, { n: '箭雨', cd: 11, d: '在瞄準處降下一陣箭雨。' }] },
-  rogue: { n: '刺客', hp: 85, sta: 120, spd: 172, wpn: 'dag1', dodge: 0.7, cost: 120, d: '閃避消耗更少。脆弱，但從不站在原地。',
+  rogue: { n: '刺客', hp: 85, sta: 120, spd: 198, wpn: 'dag1', dodge: 0.7, cost: 120, d: '閃避消耗更少。脆弱，但從不站在原地。',
     sk: [{ n: '影襲', cd: 7, d: '瞬移到敵人身後並給予一記暴擊。' }, { n: '煙幕', cd: 16, d: '3.5 秒內敵人失去你的蹤影，下一擊必定暴擊。' }] },
-  mage: { n: '法師', hp: 80, sta: 100, spd: 150, wpn: 'stf1', cost: 200, d: '最低的生命，最大的範圍。',
+  mage: { n: '法師', hp: 80, sta: 100, spd: 172, wpn: 'stf1', cost: 200, d: '最低的生命，最大的範圍。',
     sk: [{ n: '閃現', cd: 5, d: '朝移動方向瞬間位移。' }, { n: '冰霜新星', cd: 12, d: '以自身為中心爆發寒氣，傷害並冰緩敵人。' }] },
 };
 
 // ---------- 敵人 ----------
 // atks 欄位：t 類型｜rng 觸發距離｜min 最短距離｜dmg｜wind 前搖秒數｜rec 收招｜cd 冷卻｜w 權重｜ph 需要的 Boss 階段
 export const EN: Record<string, any> = {
-  slime: { n: '孢子史萊姆', hp: 30, spd: 62, r: 12, gold: 2, look: 'blob', col: '#74c98a', c2: '#e6ffb8', mv: 'hop', poise: 0,
+  slime: { n: '孢子史萊姆', hp: 30, spd: 68, r: 12, gold: 2, look: 'blob', col: '#74c98a', c2: '#e6ffb8', mv: 'hop', poise: 0,
     atks: [{ t: 'swing', rng: 46, reach: 44, arc: 2.4, dmg: 9, wind: 0.55, rec: 0.5, cd: 1.3 }],
     d: '菌林裡最常見的東西。牠不恨你，牠只是餓。' },
-  hound: { n: '菌絲獵犬', hp: 40, spd: 118, r: 12, gold: 3, look: 'beast', col: '#8f8470', c2: '#7dffd0', mv: 'orbit', keep: 150, poise: 0,
+  hound: { n: '菌絲獵犬', hp: 40, spd: 136, r: 12, gold: 3, look: 'beast', col: '#8f8470', c2: '#7dffd0', mv: 'orbit', keep: 150, poise: 0,
     atks: [{ t: 'dash', rng: 240, min: 60, dmg: 13, wind: 0.6, spd: 520, dur: 0.36, rec: 0.7, cd: 1.9 }],
     d: '皮毛下長滿發光的菌絲。會繞著獵物打轉，壓低身子後直線撲擊——看到牠伏低，就往側邊閃。' },
   spitter: { n: '吐孢者', hp: 34, spd: 52, r: 13, gold: 3, look: 'plant', col: '#c88654', c2: '#ffb86b', mv: 'keep', keep: 230, poise: 0,
     atks: [{ t: 'shot', rng: 430, dmg: 10, wind: 0.6, n: 1, spd: 230, rec: 0.4, cd: 2.1, eff: 'poison' },
       { t: 'lob', rng: 380, dmg: 14, wind: 0.5, delay: 0.95, rad: 52, rec: 0.5, cd: 3.4, w: 0.6, puddle: 'poison' }],
     d: '一株會走路的蕈。孢子彈可以用彈反打回去。' },
-  guard: { n: '蕈傘衛兵', hp: 88, spd: 68, r: 15, gold: 6, look: 'knight', col: '#b85c48', c2: '#f6dca6', mv: 'chase', shield: 1, poise: 1,
+  guard: { n: '蕈傘衛兵', hp: 88, spd: 80, r: 15, gold: 6, look: 'knight', col: '#b85c48', c2: '#f6dca6', mv: 'chase', shield: 1, poise: 1,
     atks: [{ t: 'swing', rng: 62, reach: 66, arc: 1.8, dmg: 17, wind: 0.75, rec: 0.85, cd: 1.5 },
       { t: 'slam', rng: 72, rad: 86, dmg: 20, wind: 1.0, rec: 1.0, cd: 4, w: 0.6 }],
     d: '舉著樹皮盾的老兵。正面攻擊大多會被擋下——繞到背後、用重擊破盾，或彈反牠的揮擊。' },
-  matriarch: { n: '腐菌之母', boss: 1, hp: 640, spd: 46, r: 34, gold: 70, look: 'matriarch', col: '#a8465c', c2: '#ffb86b', mv: 'chase', poise: 9,
+  matriarch: { n: '腐菌之母', boss: 1, hp: 640, spd: 54, r: 34, gold: 70, look: 'matriarch', col: '#a8465c', c2: '#ffb86b', mv: 'chase', poise: 9,
     atks: [{ t: 'slam', rng: 150, rad: 128, dmg: 22, wind: 1.0, rec: 0.9, cd: 1.4 },
       { t: 'rain', rng: 900, k: 5, rad: 54, dmg: 16, delay: 1.0, wind: 0.7, rec: 0.6, cd: 2, puddle: 'poison' },
       { t: 'radial', rng: 900, n: 14, spd: 165, dmg: 12, wind: 0.8, rec: 0.5, cd: 2, eff: 'poison' },

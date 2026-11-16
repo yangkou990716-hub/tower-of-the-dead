@@ -31,13 +31,14 @@ export const Snd = {
   play(n: string) {
     if (!this.ctx || this.vol <= 0 || this.ctx.state !== 'running') return; const S = this;
     switch (n) {
-      case 'swing': S.noise(.13, .16, 900, 1.2, 0, 2600); break;
+      case 'swing': S.noise(.12, .2, 700, 1.1, 0, 3200); break;
       case 'heavy': S.noise(.25, .25, 500, 1, 0, 2200); S.tone(120, .2, 'sine', .2, 60); break;
       case 'shoot': S.noise(.09, .14, 2400, 2, 0, 900); S.tone(520, .08, 'triangle', .08, 260); break;
       case 'cast': S.tone(660, .18, 'sine', .12, 1100); S.noise(.15, .06, 3000, 3); break;
-      case 'hit': S.noise(.09, .3, 700, 1.2); S.tone(170, .09, 'square', .12, 70); break;
-      case 'crit': S.noise(.12, .32, 1100, 1); S.tone(240, .12, 'square', .16, 70); S.tone(1400, .15, 'sine', .08, 700); break;
-      case 'kill': S.noise(.2, .22, 400, .8, 0, 120); S.tone(300, .18, 'triangle', .1, 90); break;
+      case 'hit': S.noise(.07, .34, 1100, 0.9); S.noise(.05, .2, 3800, 2); S.tone(190, .1, 'square', .13, 60); S.tone(110, .13, 'sine', .34, 42); break;
+      case 'hhit': S.noise(.16, .42, 520, 0.7, 0, 160); S.noise(.05, .22, 4200, 2); S.tone(140, .16, 'square', .16, 40); S.tone(84, .24, 'sine', .46, 30); break;
+      case 'crit': S.noise(.12, .4, 1300, 0.9); S.tone(240, .12, 'square', .16, 60); S.tone(96, .2, 'sine', .42, 34); S.tone(1500, .2, 'sine', .1, 760); S.tone(2250, .16, 'sine', .05, 1500, .02); break;
+      case 'kill': S.noise(.24, .3, 420, .7, 0, 90); S.tone(300, .2, 'triangle', .12, 70); S.tone(70, .28, 'sine', .36, 28); break;
       case 'hurt': S.tone(150, .22, 'sawtooth', .22, 55); S.noise(.16, .25, 350, .7); break;
       case 'dodge': S.noise(.2, .14, 500, .9, 0, 1800); break;
       case 'pdodge': S.tone(880, .5, 'sine', .14, 1760); S.tone(1320, .6, 'sine', .08, 2640, .05); S.noise(.4, .08, 4000, 2); break;

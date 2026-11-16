@@ -6,11 +6,12 @@ export interface InputState {
   attack: boolean;               // 本幀按下輕攻擊
   attackHeld: boolean;           // 持續按住（電腦＝蓄力；觸控右搖桿＝連續輕攻擊）
   attackUp: boolean;
-  repeat: boolean;               // true = 按住即連續輕攻擊（觸控/手把）
+  repeat: boolean;               // true = 按住即連續輕攻擊（手把右搖桿）
+  auto: boolean;                 // true = 出手時自動面向最近的敵人（觸控攻擊鍵）
   heavyHeld: boolean; heavyUp: boolean;
   dodge: boolean; parry: boolean; s1: boolean; s2: boolean; potion: boolean; interact: boolean;
 }
-export const emptyInput = (): InputState => ({ mx: 0, my: 0, aim: null, aimPt: null, attack: false, attackHeld: false, attackUp: false, repeat: false, heavyHeld: false, heavyUp: false, dodge: false, parry: false, s1: false, s2: false, potion: false, interact: false });
+export const emptyInput = (): InputState => ({ mx: 0, my: 0, aim: null, aimPt: null, attack: false, attackHeld: false, attackUp: false, repeat: false, auto: false, heavyHeld: false, heavyUp: false, dodge: false, parry: false, s1: false, s2: false, potion: false, interact: false });
 
 export interface RoomState { v?: 1; c?: 1; u?: 1; items?: { kind: string; id: string; x: number; y: number }[]; }
 export interface Run {
@@ -30,7 +31,7 @@ export interface Meta {
 }
 export interface Hub { last: number; lv: Record<string, number>; jobs: any[]; stock: Record<string, number>; }
 export interface Slot { id: number; v: number; created: number; updated: number; name: string; meta: Meta; hub: Hub; run: Run | null; }
-export interface Settings { sfx: number; music: number; shake: boolean; diff: string; btnScale: number; quality: 'high' | 'low'; multi: boolean; name: string; aimAssist: boolean; }
+export interface Settings { sfx: number; music: number; shake: boolean; diff: string; btnScale: number; quality: 'high' | 'low'; multi: boolean; name: string; aimAssist: boolean; haptics: boolean; hints: boolean; }
 
 export const newMeta = (): Meta => ({
   shards: 0, ore: 0, herbs: 0, cls: { knight: 1 }, tal: {}, codex: {}, ach: {},
@@ -38,7 +39,7 @@ export const newMeta = (): Meta => ({
   graves: [], tut: 0,
 });
 export const newHub = (now = Date.now()): Hub => ({ last: now, lv: {}, jobs: [], stock: {} });
-export const newSettings = (): Settings => ({ sfx: 0.7, music: 0.5, shake: true, diff: 'normal', btnScale: 1, quality: 'high', multi: false, name: '', aimAssist: true });
+export const newSettings = (): Settings => ({ sfx: 0.7, music: 0.5, shake: true, diff: 'normal', btnScale: 1, quality: 'high', multi: false, name: '', aimAssist: true, haptics: true, hints: true });
 
 /** 模擬世界：一次只有一個。畫面層每幀讀它、清空 ev。 */
 export const W = {
