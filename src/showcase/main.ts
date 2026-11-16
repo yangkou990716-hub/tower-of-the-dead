@@ -4,8 +4,6 @@ import './showcase.css';
 import * as THREE from 'three/webgpu';
 import { pass, vec3, vec4, float, mix, smoothstep, length, screenUV, luminance, uniform } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
-import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js';
-import { rtt, vec2 } from 'three/tsl';
 import { W, emptyInput, InputState } from '../sim/state';
 import { newRun, startRun, step, calcStats, mkEnemy, mkPlayer, mkShot, mkHaz } from '../sim/combat';
 import { buildRoom } from '../sim/world';
@@ -53,26 +51,13 @@ const bossGlow = new THREE.PointLight('#ff6fbf', 0, 6, 1.6); scene.add(bossGlow)
 // ---------------- 後處理：Bloom＋調色（暗部偏紫、亮部偏暖）＋暈影 ----------------
 let pipeline: THREE.RenderPipeline;
 const hurtU = uniform(0), flashU = uniform(0);
-/** 省 GPU 的泛光：亮部擷取（1/4 解析度，4 點取樣防閃爍）→ 兩層高斯模糊（1/4 與 1/8），共 5 道處理；原本的 BloomNode 是 11 道 */
-function cheapBloom(src: any, scale: number) {
-  const tex: any = src, px = vec2(1).div(vec2(innerWidth, innerHeight).mul(renderer.getPixelRatio()));
-  const tap = (dx: number, dy: number) => tex.sample(screenUV.add(px.mul(vec2(dx, dy)))).rgb;
-  const avg: any = tap(-1, -1).add(tap(1, -1)).add(tap(-1, 1)).add(tap(1, 1)).mul(0.25);
-  const lum = luminance(avg), k = smoothstep(0.82, 1.15, lum);
-  const bright = rtt(vec4(avg.mul(k), 1), null, null, { resolutionScale: scale } as any);
-  // 注意：模糊節點的尺寸是依畫面大小計算，必須明確給縮放，否則會用全解析度
-  const b1: any = gaussianBlur(bright, null, 3, { resolutionScale: scale });
-  const b2: any = gaussianBlur(b1, null, 4, { resolutionScale: scale * 0.5 });
-  return vec3(b1.rgb.mul(0.32).add(b2.rgb.mul(0.42)));
-}
 function buildPost() {
   pipeline?.dispose();
   pipeline = new THREE.RenderPipeline(renderer);
   const sp = pass(scene, camera);
   let c: any = sp.getTextureNode('output');
   if (TIERS[tier].bloom && !DIAG.noBloom) {
-    if (OPT.bloom2) c = c.add(cheapBloom(c, TIERS[tier].bloom));
-    else { const b: any = bloom(c, 0.32, 0.45, 0.88); b.setResolutionScale(TIERS[tier].bloom); c = c.add(b); }
+    const b: any = bloom(c, 0.32, 0.45, 0.88); b.setResolutionScale(TIERS[tier].bloom); c = c.add(b);
   }
   let o: any = vec3(c.rgb);
   const l = luminance(o);
@@ -309,7 +294,7 @@ function stats() {
     `幀 ${(S.n ? S.sum / S.n : 0).toFixed(1)} ms  最慢 ${S.worst.toFixed(0)} ms  卡頓 ${S.hitch}  CPU ${S.cpu.toFixed(1)}\n` +
     `draw calls ${S.dc}  三角形 ${(S.tri / 1000).toFixed(0)}k  草 ${env.grass.count}  粒子 ${FX.fxStats().parts}  GPU ${gpuMs > 0 ? gpuMs.toFixed(1) + ' ms' : '不可得'}\n${be}｜${c.name}｜${innerWidth}×${innerHeight}×${renderer.getPixelRatio()}`;
   document.querySelectorAll<HTMLElement>('[data-q]').forEach((e) => e.classList.toggle('on', e.dataset.q === tier));
-  $('#opt').classList.toggle('on', OPT.on); $('#bench').textContent = bench ? `測試中 ${bench.i + 1}/${BENCH.length}：${BENCH[bench.i].n}` : benchDone ? '重跑基準測試' : '基準測試（約 80 秒）';
+  $('#opt').classList.toggle('on', OPT.on); $('#bench').textContent = bench ? `測試中 ${bench.i + 1}/${BENCH.length}：${BENCH[bench.i].n}` : benchDone ? '重跑基準測試' : '基準測試（約 50 秒）';
   document.querySelectorAll<HTMLElement>('[data-api]').forEach((e) => e.classList.toggle('on', (e.dataset.api === 'webgl') === (be !== 'WebGPU')));
 }
 function report() {
@@ -360,15 +345,13 @@ $('#report button').onclick = () => { $('#report').style.display = 'none'; };
 // ---------------- 效能診斷 ----------------
 // CPU：update＝模擬＋動畫＋特效（JS 實測）；submit＝建立並送出繪圖指令（JS 實測）。
 // GPU：只有瀏覽器提供 WebGPU timestamp-query 時才是實測；否則顯示「不可得」，GPU 負擔只能用「關掉某效果後 fps 的變化」推測。
-// on＝合併彈幕／拖尾節流／粒子上限／小怪不投影（新預設）；其餘三項只在基準測試中個別量測，預設關
-const OPT = { on: store.get('opt') !== '0', tele1: false, lam: false, bloom2: false };
+// on＝新預設：合併彈幕、拖尾節流、粒子上限、小怪不投影、單層提示圈、Lambert 草（實機量測過）。關＝原版。
+const OPT = { on: store.get('opt') !== '0', tele1: true, lam: true, bloom2: false };
 const DIAG = { noBloom: false, noPost: false, hidden: [] as THREE.Object3D[] };
 const PCAP: Record<Tier, number> = { high: 1600, bal: 1000, perf: 500 };
-let optBuilt: boolean | null = null; // 上次建管線時的 bloom2
 function applyOpt() {
-  FX.FXC.instShots = OPT.on; FX.FXC.cap = OPT.on ? PCAP[tier] : 2400; FX.FXC.teleOne = OPT.tele1;
-  if (env) { const gm = env.grass.userData.mats; env.grass.material = OPT.lam ? gm.lam : gm.std; }
-  if (optBuilt !== null && optBuilt !== OPT.bloom2 && pipeline) buildPost(); optBuilt = OPT.bloom2;
+  FX.FXC.instShots = OPT.on; FX.FXC.cap = OPT.on ? PCAP[tier] : 2400; FX.FXC.teleOne = OPT.on && OPT.tele1;
+  if (env) { const gm = env.grass.userData.mats; env.grass.material = OPT.on && OPT.lam ? gm.lam : gm.std; }
   for (const a of actors.values()) if (a.kind === 'slime') a.model.traverse((o: any) => { if (o.isMesh) o.castShadow = !OPT.on; });
   store.set('opt', OPT.on ? '1' : '0');
 }
@@ -406,18 +389,14 @@ const fmtAvg = (a: ReturnType<typeof avgOf>) => a ? `${a.n} 秒｜平均 ${a.fps
 // ---------------- 基準測試：同一場景、固定劇本 ----------------
 // 高峰＝模擬 Boss 第三階段最忙的時候：螺旋彈（每 0.13 秒 3 發）＋每 1.5 秒放射彈 14 發＋每 1.2 秒孢子雨 5 個落點＋維持 4 隻小怪；Boss 定住、主角不死、定點自動揮刀。
 type Off = '' | 'particles' | 'bloom' | 'shadow' | 'grass' | 'tele' | 'res' | 'post' | 'transp';
-type Opt = { on: boolean; tele1?: boolean; lam?: boolean; bloom2?: boolean };
+type Opt = { on: boolean };
 const BENCH: { n: string; d: number; peak: boolean; opt: Opt; off: Off }[] = [
   { n: '平常・原版', d: 8, peak: false, opt: { on: false }, off: '' },
   { n: '高峰・原版', d: 10, peak: true, opt: { on: false }, off: '' },
-  { n: '高峰・新預設（合併彈幕等）', d: 10, peak: true, opt: { on: true }, off: '' },
-  { n: '高峰・新預設＋單層提示圈', d: 8, peak: true, opt: { on: true, tele1: true }, off: '' },
-  { n: '高峰・新預設＋Lambert 草', d: 8, peak: true, opt: { on: true, lam: true }, off: '' },
-  { n: '高峰・新預設＋省 GPU 泛光', d: 8, peak: true, opt: { on: true, bloom2: true }, off: '' },
-  { n: '高峰・關泛光（參考）', d: 6, peak: true, opt: { on: true }, off: 'bloom' },
-  { n: '高峰・關草（參考）', d: 6, peak: true, opt: { on: true }, off: 'grass' },
-  { n: '高峰・解析度減半（參考）', d: 6, peak: true, opt: { on: true }, off: 'res' },
+  { n: '高峰・新預設', d: 10, peak: true, opt: { on: true }, off: '' },
   { n: '平常・新預設', d: 8, peak: false, opt: { on: true }, off: '' },
+  { n: '高峰・新預設・關泛光（參考）', d: 6, peak: true, opt: { on: true }, off: 'bloom' },
+  { n: '高峰・新預設・解析度減半（參考）', d: 6, peak: true, opt: { on: true }, off: 'res' },
 ];
 let bench: { i: number; t: number; secs: Sec[]; res: { n: string; a: ReturnType<typeof avgOf> }[]; k: Record<string, number>; optWas: boolean } | null = null;
 let benchDone: { n: string; a: ReturnType<typeof avgOf> }[] | null = null;
@@ -435,7 +414,7 @@ function setOff(off: Off, on: boolean) {
 }
 function clearPeak() { for (const e of W.ents) if (!e.boss) e.dead = true; W.ents = W.ents.filter((e: any) => !e.dead); W.shots = []; W.haz = []; }
 function enterStage(i: number) {
-  const st = BENCH[i]; Object.assign(OPT, { tele1: false, lam: false, bloom2: false }, st.opt); applyOpt(); setOff(st.off, true);
+  const st = BENCH[i]; OPT.on = st.opt.on; applyOpt(); setOff(st.off, true);
   if (!st.peak) clearPeak();
   bench!.t = 0; bench!.secs = []; bench!.k = {}; acc = newAcc();
 }
@@ -462,7 +441,7 @@ function benchStep(dt: number) {
   if (bench.t >= st.d) {
     bench.res.push({ n: st.n, a: avgOf(bench.secs) }); setOff(st.off, false);
     bench.i++;
-    if (bench.i >= BENCH.length) { quietUntil = performance.now() + 4000; benchDone = bench.res; Object.assign(OPT, { on: bench.optWas, tele1: false, lam: false, bloom2: false }); applyOpt(); bench = null; clearPeak(); toast('基準測試完成，請按「產生回報」'); stats(); return; }
+    if (bench.i >= BENCH.length) { quietUntil = performance.now() + 4000; benchDone = bench.res; OPT.on = bench.optWas; applyOpt(); bench = null; clearPeak(); toast('基準測試完成，請按「產生回報」'); stats(); return; }
     enterStage(bench.i);
   }
 }

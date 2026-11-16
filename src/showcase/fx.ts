@@ -7,7 +7,9 @@ const G = { get scene() { return FXC.scene; } };
 // ---------- 粒子 ----------
 const N = 2400;
 interface P { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; age: number; s0: number; s1: number; r: number; g: number; b: number; a: number; grav: number; drag: number; }
-const ps: P[] = [];
+// 粒子物件池：預先建好、重複使用，避免一直產生新物件觸發記憶體回收（iOS 上會造成短暫掉幀）
+const ps: P[] = Array.from({ length: N }, () => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 1, age: 0, s0: 0, s1: 0, r: 0, g: 0, b: 0, a: 0, grav: 0, drag: 0 }));
+let alive = 0;
 const pos = new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3), col = new THREE.InstancedBufferAttribute(new Float32Array(N * 4), 4), siz = new THREE.InstancedBufferAttribute(new Float32Array(N), 1);
 pos.setUsage(THREE.DynamicDrawUsage); col.setUsage(THREE.DynamicDrawUsage); siz.setUsage(THREE.DynamicDrawUsage);
 let sprite: THREE.Sprite;
@@ -28,23 +30,27 @@ export function emit(n: number, o: { x: number; y: number; z: number; c: string;
   n = Math.max(1, Math.round(n * FXC.particles));
   tmpC.set(o.c);
   const cap = Math.min(N, FXC.cap);
-  for (let i = 0; i < n && ps.length < cap; i++) {
+  for (let i = 0; i < n && alive < cap; i++) {
     const sp = o.spd ? o.spd[0] + Math.random() * (o.spd[1] - o.spd[0]) : 1;
     const ang = o.dir !== undefined ? o.dir + (Math.random() - 0.5) * (o.spread ?? 1) : Math.random() * Math.PI * 2;
     const j = o.jit ?? 0;
-    ps.push({ x: o.x + (Math.random() - 0.5) * j, y: o.y + (Math.random() - 0.5) * j * 0.5, z: o.z + (Math.random() - 0.5) * j, vx: Math.cos(ang) * sp, vz: Math.sin(ang) * sp, vy: (o.up ?? 0) * (0.6 + Math.random() * 0.8),
-      life: o.life ? o.life[0] + Math.random() * (o.life[1] - o.life[0]) : 0.5, age: 0, s0: o.s?.[0] ?? 0.2, s1: o.s?.[1] ?? 0, r: tmpC.r, g: tmpC.g, b: tmpC.b, a: o.a ?? 1, grav: o.grav ?? 0, drag: o.drag ?? 2 });
+    const q = ps[alive++];
+    q.x = o.x + (Math.random() - 0.5) * j; q.y = o.y + (Math.random() - 0.5) * j * 0.5; q.z = o.z + (Math.random() - 0.5) * j;
+    q.vx = Math.cos(ang) * sp; q.vz = Math.sin(ang) * sp; q.vy = (o.up ?? 0) * (0.6 + Math.random() * 0.8);
+    q.life = o.life ? o.life[0] + Math.random() * (o.life[1] - o.life[0]) : 0.5; q.age = 0; q.s0 = o.s?.[0] ?? 0.2; q.s1 = o.s?.[1] ?? 0;
+    q.r = tmpC.r; q.g = tmpC.g; q.b = tmpC.b; q.a = o.a ?? 1; q.grav = o.grav ?? 0; q.drag = o.drag ?? 2;
   }
 }
 export function updFx(dt: number) {
   let n = 0;
-  for (let i = ps.length - 1; i >= 0; i--) {
-    const p = ps[i]; p.age += dt; if (p.age >= p.life) { ps[i] = ps[ps.length - 1]; ps.pop(); continue; }
+  for (let i = alive - 1; i >= 0; i--) {
+    const p = ps[i]; p.age += dt; if (p.age >= p.life) { ps[i] = ps[alive - 1]; ps[alive - 1] = p; alive--; continue; }
     const f = Math.exp(-p.drag * dt); p.vx *= f; p.vz *= f; p.vy = p.vy * f - p.grav * dt;
     p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
   }
   const pa = pos.array as Float32Array, ca = col.array as Float32Array, sa = siz.array as Float32Array;
-  for (const p of ps) {
+  for (let i = 0; i < alive; i++) {
+    const p = ps[i];
     const t = p.age / p.life, k = 1 - t;
     pa[n * 3] = p.x; pa[n * 3 + 1] = p.y; pa[n * 3 + 2] = p.z;
     ca[n * 4] = p.r * 2.2; ca[n * 4 + 1] = p.g * 2.2; ca[n * 4 + 2] = p.b * 2.2; ca[n * 4 + 3] = p.a * Math.min(1, k * 2.5) * Math.min(1, p.age * 30);
@@ -154,7 +160,7 @@ export function shotsEnd() {
   for (let i = shotI; i < shotPool.length; i++) shotPool[i].visible = false;
   if (shotIM) { shotIM.count = shotN; shotIM.instanceMatrix.needsUpdate = true; if (shotIM.instanceColor) shotIM.instanceColor.needsUpdate = true; }
 }
-export function fxStats() { return { parts: ps.length, tele: FXC.noTele ? 0 : teleI, shots: FXC.instShots ? shotN : shotI, arcs: arcs.length }; }
+export function fxStats() { return { parts: alive, tele: FXC.noTele ? 0 : teleI, shots: FXC.instShots ? shotN : shotI, arcs: arcs.length }; }
 void teleN;
 
 // ---------- 揮砍弧：沿弧線由亮到暗的刀光（頭亮尾淡、內緣透明） ----------
