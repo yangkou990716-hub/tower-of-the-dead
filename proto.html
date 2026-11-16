@@ -25,6 +25,9 @@
   #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 15px; color: var(--dim); background: var(--bg); padding: 16px; text-align: center; }
   #report { display: none; position: fixed; inset: 0; background: #000c; align-items: center; justify-content: center; flex-direction: column; gap: 8px; padding: 16px; }
   #report textarea { width: min(640px, 100%); height: 55vh; font: 12px ui-monospace, monospace; background: #0b0e12; color: var(--fg); border: 1px solid #ffffff33; border-radius: 6px; -webkit-user-select: text; user-select: text; }
+  #fade { position: fixed; inset: 0; background: #000; opacity: 0; pointer-events: none; }
+  #rot { display: none; position: fixed; left: 50%; bottom: 25%; transform: translateX(-50%); background: var(--panel); color: var(--fg); padding: 8px 12px; border-radius: 8px; font-size: 14px; pointer-events: none; }
+  @media (orientation: portrait) and (pointer: coarse) { #rot { display: block; } }
 </style>
 </head>
 <body>
@@ -39,6 +42,8 @@
 </div>
 <div id="hint">左半邊拖曳＝移動（放手 3 秒後自動遊玩）／點火盆＝點燃或熄滅／電腦：WASD、F</div>
 <div id="stick"><i></i></div>
+<div id="fade"></div>
+<div id="rot">請把手機橫放（測試數據以橫向為準）</div>
 <div id="boot">載入中…</div>
 <div id="report"><b></b><textarea readonly></textarea><button>關閉</button></div>
 <script type="module" src="/src/proto/main.ts"></script>

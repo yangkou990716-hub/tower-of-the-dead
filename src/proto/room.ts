@@ -13,6 +13,8 @@ export interface RoomView {
   update(t: number, dt: number, locked: boolean): void; dispose(): void;
 }
 
+const PUD: { tex: THREE.DataTexture | null; mat: THREE.MeshPhysicalMaterial | null } = { tex: null, mat: null };
+let MIST: THREE.MeshBasicMaterial | null = null;
 const hsh = (a: number, b: number, c = 0, d = 0) => { let h = (a * 374761393 + b * 668265263 + c * 2246822519 + d * 3266489917) >>> 0; h = ((h ^ (h >>> 13)) * 1274126177) >>> 0; return (h ^ (h >>> 16)) / 4294967296; };
 
 // ---------- 共用材質（≥5 種：石、苔、金屬、發光、液體，另有木、火） ----------
@@ -33,7 +35,7 @@ export function mats(pal: any) {
     wood: new THREE.MeshStandardMaterial({ color: '#6b4a32', roughness: 0.85 }),
     glowCap: new THREE.MeshStandardMaterial({ color: '#1c3a36', emissive: pal.acc, emissiveIntensity: 2.4, roughness: 0.6 }),
     stem: new THREE.MeshStandardMaterial({ color: '#d8e6cf', emissive: '#2b6b5a', emissiveIntensity: 0.5, roughness: 0.8 }),
-    liquid: new THREE.MeshPhysicalMaterial({ color: '#0f2420', roughness: 0.06, metalness: 0.1, normalMap: ripple, normalScale: new THREE.Vector2(0.35, 0.35), transparent: true, opacity: 0.88, depthWrite: false, clearcoat: 1, clearcoatRoughness: 0.05 }),
+    liquid: new THREE.MeshPhysicalMaterial({ color: '#3b6a64', roughness: 0.05, metalness: 0.3, normalMap: ripple, normalScale: new THREE.Vector2(0.35, 0.35), transparent: true, opacity: 0.7, depthWrite: false, clearcoat: 1, clearcoatRoughness: 0.05 }),
     fire: new THREE.MeshBasicMaterial({ color: new THREE.Color(4.0, 1.6, 0.45), transparent: true, opacity: 0.95, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }),
     ember: new THREE.MeshStandardMaterial({ color: '#2a1a12', emissive: '#ff6a20', emissiveIntensity: 1.2, roughness: 0.9 }),
     shadow: new THREE.MeshBasicMaterial({ color: '#000', alphaMap: softDisc(0.2, 0.75), transparent: true, depthWrite: false, opacity: 0.8 }),
@@ -151,7 +153,7 @@ export function buildRoomView(room: any, route: Route, kay: Kay | null): RoomVie
   }
   if (useK) {
     const P: THREE.Matrix4[] = [], B: THREE.Matrix4[] = [], X: THREE.Matrix4[] = [];
-    for (const [x, y] of obs) { const r = hsh(seed, x, y, 8); (r < 0.6 ? P : r < 0.8 ? B : X).push(r < 0.6 ? mtx(x + 0.5, 0, y + 0.5, 0.6, 0.55, 0.6) : mtx(x + 0.5, 0, y + 0.5, 0.45, 0.45, 0.45, r * 6)); }
+    for (const [x, y] of obs) { const r = hsh(seed, x, y, 8); (r < 0.6 ? P : r < 0.8 ? B : X).push(r < 0.6 ? mtx(x + 0.5, 0, y + 0.5, 0.6, 0.4, 0.6) : mtx(x + 0.5, 0, y + 0.5, 0.45, 0.45, 0.45, r * 6)); }
     for (const im of [...kay.inst('pillar', P, true, true), ...kay.inst('barrel_large', B, true, true), ...kay.inst('box_small', X, true, true)]) add(im);
   } else {
     const P: THREE.Matrix4[] = [], PB: THREE.Matrix4[] = [];
@@ -173,10 +175,15 @@ export function buildRoomView(room: any, route: Route, kay: Kay | null): RoomVie
     const w = RW * S, h = RH * S, a = new Float32Array(w * h); for (let i = 0; i < w * h; i++) a[i] = data[i * 4];
     for (let pass = 0; pass < 3; pass++) { const b = a.slice(); for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) a[y * w + x] = (b[y * w + x] * 2 + b[y * w + x - 1] + b[y * w + x + 1] + b[(y - 1) * w + x] + b[(y + 1) * w + x]) / 6; }
     for (let i = 0; i < w * h; i++) { const v = Math.max(0, Math.min(255, (a[i] - 90) * 2.2)); data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = data[i * 4 + 3] = v; }
-    const mask = new THREE.DataTexture(data, w, h); mask.magFilter = THREE.LinearFilter; mask.minFilter = THREE.LinearFilter; mask.flipY = false; mask.needsUpdate = true;
-    const mat = m.liquid.clone(); mat.alphaMap = mask;
-    const geo = new THREE.PlaneGeometry(RW, RH).rotateX(-Math.PI / 2); const uv = geo.attributes.uv; for (let i = 0; i < uv.count; i++) uv.setY(i, 1 - uv.getY(i));
-    const pm = new THREE.Mesh(geo, mat); pm.position.set(RW / 2, 0.03, RH / 2); pm.receiveShadow = true; pm.renderOrder = 1; add(pm);
+    // 共用一張遮罩貼圖與一個材質（換房不產生新材質 → 不會重新編譯著色器）
+    if (!PUD.tex) { PUD.tex = new THREE.DataTexture(new Uint8Array(w * h * 4), w, h); PUD.tex.magFilter = THREE.LinearFilter; PUD.tex.minFilter = THREE.LinearFilter; PUD.tex.flipY = false; PUD.mat = m.liquid; PUD.mat.alphaMap = PUD.tex; }
+    (PUD.tex.image.data as Uint8Array).set(data); PUD.tex.needsUpdate = true;
+    const mat = PUD.mat!;
+    // 只蓋住有水的範圍（減少整片透明平面的填充成本）
+    let x0 = RW, x1 = 0, y0 = RH, y1 = 0; for (const [x, y] of puddle) { x0 = Math.min(x0, x - 1); x1 = Math.max(x1, x + 2); y0 = Math.min(y0, y - 1); y1 = Math.max(y1, y + 2); }
+    const geo = new THREE.PlaneGeometry(x1 - x0, y1 - y0).rotateX(-Math.PI / 2); const pos = geo.attributes.position, uv = geo.attributes.uv;
+    for (let i = 0; i < uv.count; i++) uv.setXY(i, (pos.getX(i) + (x0 + x1) / 2) / RW, (pos.getZ(i) + (y0 + y1) / 2) / RH);
+    const pm = new THREE.Mesh(geo, mat); pm.position.set((x0 + x1) / 2, 0.03, (y0 + y1) / 2); pm.receiveShadow = true; pm.renderOrder = 1; add(pm);
     (group as any).puddleMat = mat;
   }
 
@@ -229,9 +236,9 @@ export function buildRoomView(room: any, route: Route, kay: Kay | null): RoomVie
   }
 
   // ---- 地底暗光與霧片 ----
-  const mistMat = new THREE.MeshBasicMaterial({ color: pal.acc, alphaMap: softDisc(0, 0.07), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+  const mistMat = MIST ||= new THREE.MeshBasicMaterial({ color: pal.acc, alphaMap: softDisc(0, 0.07), transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
   const mists: THREE.Mesh[] = [];
-  for (let i = 0; i < 6; i++) { const ms = new THREE.Mesh(G.plane, mistMat); ms.scale.set(7, 1, 5); ms.position.set(3 + hsh(seed, i, 40) * (RW - 6), 0.35 + i * 0.05, 2 + hsh(seed, i, 41) * (RH - 4)); ms.renderOrder = 2; group.add(ms); mists.push(ms); }
+  for (let i = 0; i < 4; i++) { const ms = new THREE.Mesh(G.plane, mistMat); ms.scale.set(6, 1, 4); ms.position.set(3 + hsh(seed, i, 40) * (RW - 6), 0.35 + i * 0.05, 2 + hsh(seed, i, 41) * (RH - 4)); ms.renderOrder = 2; group.add(ms); mists.push(ms); }
 
   let mistT = 0;
   return {
@@ -250,7 +257,7 @@ export function buildRoomView(room: any, route: Route, kay: Kay | null): RoomVie
         else d.visible = locked;
       }
     },
-    dispose() { for (const im of disposables) im.dispose(); group.traverse((o: any) => { if (o.isMesh && o.geometry && !Object.values(G).includes(o.geometry) && !o.isInstancedMesh && !o.userData.shared) o.geometry.dispose(); }); mistMat.dispose(); },
+    dispose() { for (const im of disposables) im.dispose(); group.traverse((o: any) => { if (o.isMesh && o.geometry && !Object.values(G).includes(o.geometry) && !o.isInstancedMesh && !o.userData.shared) o.geometry.dispose(); }); },
   };
 }
 

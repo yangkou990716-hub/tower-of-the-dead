@@ -6,6 +6,7 @@ import { bloom } from 'three/addons/tsl/display/BloomNode.js';
 import { ao } from 'three/addons/tsl/display/GTAONode.js';
 import { W } from '../sim/state';
 import { T, RW, RH } from '../sim/util';
+import { EN } from '../sim/data';
 import { newRun, startRun, step } from '../sim/combat';
 import { mkBot } from '../sim/bot';
 import { TIERS, Tier, lowerTier } from './quality';
@@ -20,13 +21,13 @@ const $ = (s: string) => document.querySelector(s) as HTMLElement;
 const store = { get(k: string) { try { return localStorage.getItem('proto.' + k); } catch { return null; } }, set(k: string, v: string) { try { localStorage.setItem('proto.' + k, v); } catch { /* 無痕模式 */ } } };
 
 let tier: Tier = (Q.get('q') as Tier) || (store.get('tier') as Tier) || 'balanced'; if (!TIERS[tier]) tier = 'balanced';
-let route: Route = (Q.get('assets') as Route) || (store.get('route') as Route) || 'proc';
+let route: Route = (Q.get('assets') as Route) || (store.get('route') as Route) || 'kaykit';
 let autoDown = (Q.get('auto') ?? store.get('auto') ?? '1') === '1';
 const wantGL = Q.get('api') === 'webgl' || (Q.get('api') == null && store.get('api') === 'webgl');
 
 // ---------------- 渲染器 ----------------
 const renderer = new THREE.WebGPURenderer({ antialias: false, forceWebGL: wantGL, powerPreference: 'high-performance' });
-renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15;
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.25;
 renderer.shadowMap.enabled = true;
 renderer.info.autoReset = false;
 renderer.onDeviceLost = (info: any) => { const b = $('#boot'); b.style.display = 'flex'; b.textContent = `GPU 裝置遺失（${info?.message || info?.reason || '未知'}）。請重新整理，或改用 WebGL 2：在網址後加 ?api=webgl`; };
@@ -37,10 +38,11 @@ const camera = new THREE.PerspectiveCamera(30, 1, 0.5, 80);
 const PITCH = 53 * Math.PI / 180;
 
 // ---------------- 光 ----------------
-const hemi = new THREE.HemisphereLight('#5d7a8c', '#141a18', 0.8); scene.add(hemi);
-const keyLight = new THREE.SpotLight('#ffd9a0', 70, 16, 1.15, 0.75, 1.6); // 提燈的主光（有陰影）
+const hemi = new THREE.HemisphereLight('#8aa4b6', '#1e2624', 0.95); scene.add(hemi);
+const keyLight = new THREE.SpotLight('#ffd9a0', 70, 20, 1.2, 0.85, 1.4); // 提燈的主光（有陰影）
 keyLight.castShadow = true; keyLight.shadow.bias = -0.0008; keyLight.shadow.normalBias = 0.03; keyLight.shadow.camera.near = 0.5; keyLight.shadow.camera.far = 16;
 scene.add(keyLight, keyLight.target);
+const moon = new THREE.DirectionalLight('#8fb4d8', 0.6); moon.position.set(-4, 10, 6); scene.add(moon, moon.target); // 冷色補光（無陰影），讓暗處看得清楚
 let pool: THREE.PointLight[] = [];
 function buildPool() {
   for (const l of pool) { scene.remove(l); l.dispose(); }
@@ -101,6 +103,16 @@ function poll() {
 let kay: Kay | null = null, kayLoad: Promise<Kay> | null = null, kayInfo = '';
 let roomView: RoomView | null = null, player: PlayerView | null = null, actors: Actors | null = null, curRoom: any = null;
 const fx = new Fx(); scene.add(fx.mesh);
+let busy = false, fade = 0; // fade: 1 = 全黑
+const S_TRANS = { n: 0, worst: 0 };
+async function rebuildAsync() {
+  busy = true; const t0 = performance.now();
+  rebuild();
+  try { await renderer.compileAsync(scene, camera); } catch (e) { console.warn(e); }
+  const ms = performance.now() - t0; S_TRANS.n++; S_TRANS.worst = Math.max(S_TRANS.worst, ms);
+  busy = false; skipStat = true;
+}
+let skipStat = false;
 function rebuild() {
   if (roomView) { scene.remove(roomView.group); roomView.dispose(); }
   if (actors) { actors.clear(); scene.remove(actors.root); }
@@ -109,7 +121,7 @@ function rebuild() {
   roomView = buildRoomView(W.room, route, k); scene.add(roomView.group);
   actors = new Actors(k); scene.add(actors.root); actors.setBlob(!TIERS[tier].shadow);
   player = makePlayer(k); scene.add(player.obj); player.obj.userData.blob.visible = !TIERS[tier].shadow;
-  const pal = W.room.biome.pal; scene.background = new THREE.Color(pal.bg); scene.fog = new THREE.FogExp2(pal.bg, 0.028);
+  const pal = W.room.biome.pal; scene.background = new THREE.Color(pal.bg); scene.fog = new THREE.FogExp2(pal.bg, 0.016);
   curRoom = W.room; camTarget.set(W.p.x / T, 0, W.p.y / T);
 }
 async function setRoute(r: Route) {
@@ -118,7 +130,18 @@ async function setRoute(r: Route) {
     try { kay = await kayLoad; kayInfo = `KayKit ${(kay.bytes / 1048576).toFixed(1)} MB／${(kay.ms / 1000).toFixed(1)} s`; }
     catch (e) { kayInfo = 'KayKit 載入失敗：' + e; hud(); return; }
   }
-  route = r; store.set('route', r); rebuild(); hud();
+  route = r; store.set('route', r); await rebuildAsync(); await warmup(); hud();
+}
+
+async function warmup() {
+  if (!actors) return;
+  const ids = ['slime', 'hound', 'spitter', 'guard', 'matriarch'], saved = W.ents;
+  const fake = ids.map((id, i) => ({ uid: -1 - i, id, d: (EN as any)[id], x: (W.p.x + (i - 2) * 30), y: W.p.y, r: (EN as any)[id].r, a: 0, state: 'move', t: 1, flash: 0, moving: true }));
+  W.ents = fake as any; actors.update(0, 0.016, !TIERS[tier].shadow);
+  const extra = [{ uid: -99, k: 'chest', x: W.p.x, y: W.p.y }, { uid: -98, k: 'stairs', x: W.p.x, y: W.p.y }, { uid: -97, k: 'item', x: W.p.x, y: W.p.y }, { uid: -96, k: 'fire', x: W.p.x, y: W.p.y }];
+  const so = W.objs; W.objs = so.concat(extra as any); actors.update(0, 0.016, !TIERS[tier].shadow);
+  try { await renderer.compileAsync(scene, camera); } catch (e) { console.warn(e); }
+  W.ents = saved; W.objs = so; actors.update(0, 0.016, !TIERS[tier].shadow); for (const c of actors.corpses) actors.root.remove(c.g); actors.corpses = [];
 }
 
 // ---------------- 鏡頭 ----------------
@@ -129,7 +152,7 @@ function onResize() {
 addEventListener('resize', onResize);
 function updCamera(dt: number) {
   const px = W.p.x / T, pz = W.p.y / T, k = 1 - Math.exp(-dt * 6);
-  const dist = 21 * Math.max(1, 1.5 / camera.aspect), halfW = dist * Math.tan(15 * Math.PI / 180) * camera.aspect;
+  const dist = 17 * Math.max(1, 1.5 / camera.aspect), halfW = dist * Math.tan(15 * Math.PI / 180) * camera.aspect;
   const tx = RW > halfW * 2 ? Math.min(RW - halfW + 0.5, Math.max(halfW - 0.5, px)) : RW / 2;
   const tz = Math.min(RH - 4, Math.max(4, pz));
   camTarget.x += (tx - camTarget.x) * k; camTarget.z += (tz - camTarget.z) * k;
@@ -141,8 +164,8 @@ const tmpV = new THREE.Vector3();
 function updLights(t: number) {
   const p = W.p, px = p.x / T, pz = p.y / T;
   const lan = player!.lantern.getWorldPosition(tmpV);
-  keyLight.position.set(px - 0.3, 4.2, pz + 0.6); keyLight.target.position.set(px, 0, pz); keyLight.intensity = 60 + Math.sin(t * 7) * 3 + Math.sin(t * 17) * 2;
-  const srcs: (LightSrc & { s?: number })[] = [{ x: lan.x, y: lan.y + 0.1, z: lan.z, col: new THREE.Color('#ffc27a'), int: 5, dist: 7, flicker: 0.15, on: () => true, prio: 9 }];
+  keyLight.position.set(px - 0.3, 4.2, pz + 0.6); keyLight.target.position.set(px, 0, pz); keyLight.intensity = 68 + Math.sin(t * 7) * 4 + Math.sin(t * 17) * 2; moon.target.position.set(px, 0, pz); moon.position.set(px - 4, 10, pz + 6);
+  const srcs: (LightSrc & { s?: number })[] = [{ x: lan.x, y: lan.y + 0.1, z: lan.z, col: new THREE.Color('#ffc27a'), int: 9, dist: 9, flicker: 0.15, on: () => true, prio: 9 }];
   for (const w of wisps) { srcs.push(w); }
   for (const s of roomView!.lights) if (s.on()) srcs.push(s);
   for (const s of srcs) s.s = s.prio * 4 - Math.hypot(s.x - camTarget.x, s.z - camTarget.z);
@@ -176,9 +199,9 @@ cv.addEventListener('pointerup', endStick); cv.addEventListener('pointercancel',
 function showStick() { const s = $('#stick'); s.style.display = stick.on ? 'block' : 'none'; s.style.left = stick.ox + 'px'; s.style.top = stick.oy + 'px'; ($('#stick i') as HTMLElement).style.transform = `translate(${stick.x * 40}px,${stick.y * 40}px)`; }
 
 // ---------------- 統計 ----------------
-const S = { t0: 0, frames: 0, sum: 0, worst: 0, hist: [] as number[], secFrames: 0, secT: 0, minSec: 1e9, below45: 0, lastFps: 0, lowStreak: 0, log: [] as string[], dc: 0, tri: 0, cpu: 0 };
+const S = { pauses: 0, t0: 0, frames: 0, sum: 0, worst: 0, hist: [] as number[], secFrames: 0, secT: 0, minSec: 1e9, below45: 0, lastFps: 0, lowStreak: 0, log: [] as string[], dc: 0, tri: 0, cpu: 0 };
 let loadMs = 0;
-function resetStats() { Object.assign(S, { t0: performance.now(), frames: 0, sum: 0, worst: 0, hist: [], secFrames: 0, secT: 0, minSec: 1e9, below45: 0, lowStreak: 0 }); }
+function resetStats() { Object.assign(S, { pauses: 0, t0: performance.now(), frames: 0, sum: 0, worst: 0, hist: [], secFrames: 0, secT: 0, minSec: 1e9, below45: 0, lowStreak: 0 }); }
 function stat(dtMs: number) {
   S.frames++; S.sum += dtMs; S.worst = Math.max(S.worst, dtMs); S.hist.push(dtMs); if (S.hist.length > 6000) S.hist.splice(0, 1000);
   S.secFrames++; S.secT += dtMs;
@@ -202,7 +225,7 @@ function report() {
     `後端：${b}｜畫質：${c.name}｜資產：${route === 'kaykit' ? 'KayKit' : '程序化'}｜自動降級：${autoDown ? '開' : '關'}`,
     `畫面：${innerWidth}×${innerHeight} ×${renderer.getPixelRatio()}`,
     `首次載入：${(loadMs / 1000).toFixed(2)} s｜${kayInfo || 'KayKit 未載入'}｜離線：${swState}`,
-    `測試時長：${fmtT()}`,
+    `測試時長：${fmtT()}｜換房 ${S_TRANS.n} 次（黑幕最長 ${S_TRANS.worst.toFixed(0)} ms，不計入 fps）｜長暫停 ${S.pauses} 次`,
     `平均 fps：${avg.toFixed(1)}｜最低 1 秒 fps：${S.minSec < 1e9 ? S.minSec.toFixed(0) : '-'}｜低於 45 的秒數：${S.below45}`,
     `幀時間：平均 ${(S.sum / Math.max(1, S.frames)).toFixed(1)} ms／99% ${p99().toFixed(1)} ms／最差 ${S.worst.toFixed(0)} ms`,
     `draw calls：${S.dc}｜三角形：${(S.tri / 1000).toFixed(1)}k｜粒子：${fx.alive}｜點光源：${c.lights}`,
@@ -226,10 +249,10 @@ function hud() {
 
 // ---------------- 按鈕 ----------------
 document.querySelectorAll<HTMLButtonElement>('[data-q]').forEach((e) => e.onclick = () => { tier = e.dataset.q as Tier; applyTier(); resetStats(); });
-document.querySelectorAll<HTMLButtonElement>('[data-r]').forEach((e) => e.onclick = () => { setRoute(e.dataset.r as Route).then(resetStats); });
+document.querySelectorAll<HTMLButtonElement>('[data-r]').forEach((e) => e.onclick = () => { setRoute(e.dataset.r as Route).then(() => { resetStats(); S_TRANS.n = 0; S_TRANS.worst = 0; }); });
 document.querySelectorAll<HTMLButtonElement>('[data-api]').forEach((e) => e.onclick = () => { store.set('api', e.dataset.api!); if (Q.has('api')) { const u = new URL(location.href); u.searchParams.set('api', e.dataset.api!); location.href = u.href; } else location.reload(); });
 $('#auto').onclick = () => { autoDown = !autoDown; store.set('auto', autoDown ? '1' : '0'); hud(); };
-$('#reset').onclick = () => { resetStats(); S.log = []; hud(); };
+$('#reset').onclick = () => { resetStats(); S.log = []; S_TRANS.n = 0; S_TRANS.worst = 0; hud(); };
 $('#copy').onclick = async () => {
   const txt = report(); let ok = false;
   try { await navigator.clipboard.writeText(txt); ok = true; } catch { /* 有些環境不給剪貼簿 */ }
@@ -245,14 +268,18 @@ async function main() {
   await renderer.init();
   if (!(renderer.backend as any).isWebGPUBackend && !wantGL) S.log.push('WebGPU 不可用，自動改用 WebGL 2');
   applyTier();
-  if (route === 'kaykit') await setRoute('kaykit'); else rebuild();
-  resetStats();
+  if (route === 'kaykit') await setRoute('kaykit'); else { await rebuildAsync(); await warmup(); }
+  // 第一幀先畫一次（WebGPU 首幀會建立管線），再開始計時
+  renderer.info.reset(); if (pipeline) pipeline.render(); else renderer.render(scene, camera);
+  resetStats(); S_TRANS.n = 0; S_TRANS.worst = 0;
   renderer.setAnimationLoop(frame);
 }
 function frame(now: number) {
   const cap = TIERS[tier].cap;
   if (cap < 60 && now - lastRender < 1000 / cap - 2) return;
   const dtMs = lastRender ? now - lastRender : 16.7; lastRender = now;
+  if (dtMs > 1000) { S.pauses++; return; } // 切到背景、通知中心等造成的長暫停，不算進效能
+  if (busy) return; // 換房編譯中：停在黑幕，不計入統計
   const dt = Math.min(0.1, dtMs / 1000), c0 = performance.now();
   manualT += dt;
   // 模擬：固定 60 Hz
@@ -263,7 +290,8 @@ function frame(now: number) {
     if (W.run && W.p && W.run.hp < W.ST.maxHp * 0.4) W.run.hp = W.ST.maxHp; // 原型：不會死
     if (W.over) { newSim(); }
   }
-  if (W.room !== curRoom) rebuild();
+  if (W.room !== curRoom) { fade = 1; $('#fade').style.opacity = '1'; rebuildAsync(); return; }
+  fade = Math.max(0, fade - dt * 4); $('#fade').style.opacity = String(fade);
   const t = now / 1000;
   player!.update(t, dt, evs); actors!.update(t, dt, !TIERS[tier].shadow); fx.onEvents(evs);
   roomView!.update(t, dt, !!W.room.locked);
@@ -280,7 +308,7 @@ function frame(now: number) {
   if (pipeline) pipeline.render(); else renderer.render(scene, camera);
   S.dc = renderer.info.render.drawCalls; S.tri = renderer.info.render.triangles; S.cpu = performance.now() - c0;
   if (!loadMs) { loadMs = performance.now(); $('#boot').style.display = 'none'; }
-  stat(dtMs);
+  if (skipStat) skipStat = false; else stat(dtMs);
   hudT += dt; if (hudT > 0.25) { hudT = 0; hud(); }
 }
 

@@ -3,17 +3,20 @@ import * as THREE from 'three/webgpu';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 
 export const KAY_PIECES = ['floor_tile_small', 'floor_tile_small_broken_A', 'floor_tile_small_weeds_A', 'floor_dirt_small_A', 'wall', 'wall_doorway',
-  'pillar', 'column', 'barrel_large', 'box_small', 'chest'];
+  'pillar', 'column', 'barrel_large', 'box_small', 'chest', 'Skeleton_Blade', 'Skeleton_Shield_Large_A', 'Skeleton_Staff', 'Skeleton_Axe'];
+/** 會動的角色（有骨架與動畫）。 */
+export const KAY_CHARS = ['Knight', 'Skeleton_Minion', 'Skeleton_Warrior', 'Skeleton_Rogue', 'Skeleton_Mage'];
 
 export interface Kay {
   inst(key: string, ms: THREE.Matrix4[], cast: boolean, recv: boolean): THREE.InstancedMesh[];
   clone(key: string): THREE.Object3D;
   knight: GLTF;
+  chars: Record<string, GLTF>;
   bytes: number; ms: number;
 }
 
 export async function loadKay(base: string, onProg: (done: number, total: number) => void): Promise<Kay> {
-  const t0 = performance.now(), loader = new GLTFLoader(), all = [...KAY_PIECES, 'Knight'];
+  const t0 = performance.now(), loader = new GLTFLoader(), all = [...KAY_PIECES, ...KAY_CHARS];
   let done = 0, bytes = 0;
   const got: Record<string, GLTF> = {};
   await Promise.all(all.map(async (k) => {
@@ -23,9 +26,9 @@ export async function loadKay(base: string, onProg: (done: number, total: number
     onProg(++done, all.length);
   }));
   for (const k of KAY_PIECES) got[k].scene.traverse((o: any) => { if (o.isMesh) { o.castShadow = o.receiveShadow = true; o.userData.shared = true; } });
-  got.Knight.scene.traverse((o: any) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
+  for (const k of KAY_CHARS) got[k].scene.traverse((o: any) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
   return {
-    knight: got.Knight, bytes, ms: performance.now() - t0,
+    knight: got.Knight, chars: Object.fromEntries(KAY_CHARS.map((k) => [k, got[k]])), bytes, ms: performance.now() - t0,
     inst(key, ms, cast, recv) {
       if (!ms.length) return [];
       const sc = got[key].scene; sc.updateMatrixWorld(true); const out: THREE.InstancedMesh[] = [];

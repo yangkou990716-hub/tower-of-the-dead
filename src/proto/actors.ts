@@ -48,7 +48,7 @@ function procPlayer(): PlayerView {
 
 function kayPlayer(kay: Kay): PlayerView {
   const m = mats(W.room.biome.pal), root = new THREE.Group();
-  const model = SkeletonUtils.clone(kay.knight.scene); model.scale.setScalar(0.42); root.add(model);
+  const model = SkeletonUtils.clone(kay.knight.scene); model.scale.setScalar(0.48); root.add(model);
   const keep = new Set(['1H_Sword', 'Round_Shield']);
   model.traverse((o: any) => { if (o.isMesh || o.isSkinnedMesh) { const n = o.name; if (/Shield|Sword|Axe|Offhand/i.test(n) && !keep.has(n)) o.visible = false; o.castShadow = true; } });
   const mixer = new THREE.AnimationMixer(model), clip = (n: string) => THREE.AnimationClip.findByName(kay.knight.animations, n);
@@ -66,7 +66,7 @@ function kayPlayer(kay: Kay): PlayerView {
   const glow = new THREE.Mesh(new THREE.SphereGeometry(0.055, 10, 6), new THREE.MeshBasicMaterial({ color: new THREE.Color(5, 3.2, 1.4), toneMapped: false }));
   lantern.add(cage, glow);
   let hand: THREE.Object3D | null = null; model.traverse((o) => { if (!hand && /hand.?slot.?l|handslot\.l|hand\.l|lowerarm\.l/i.test(o.name)) hand = o; });
-  if (hand) { (hand as THREE.Object3D).add(lantern); lantern.scale.setScalar(1 / 0.42); lantern.position.set(0, -0.35, 0); }
+  if (hand) { (hand as THREE.Object3D).add(lantern); lantern.scale.setScalar(1 / 0.48); lantern.position.set(0, -0.35, 0); }
   else { lantern.position.set(-0.35, 0.75, 0.1); root.add(lantern); }
   const shadow = new THREE.Mesh(GEO.disc, m.shadow); shadow.position.y = 0.02; shadow.scale.setScalar(0.9); root.add(shadow); root.userData.blob = shadow;
   let dead = false;
@@ -136,10 +136,58 @@ function enemyMesh(e: any): THREE.Group {
   return g;
 }
 
+// ---------- KayKit 骷髏敵人（CC0 Skeletons 包；共用骨架動畫） ----------
+const EK: Record<string, { c: string; r?: string; l?: string; atk: string; mv: string }> = {
+  slime: { c: 'Skeleton_Minion', r: 'Skeleton_Blade', atk: '1H_Melee_Attack_Chop', mv: 'Walking_D_Skeletons' },
+  hound: { c: 'Skeleton_Rogue', r: 'Skeleton_Blade', l: 'Skeleton_Blade', atk: '1H_Melee_Attack_Chop', mv: 'Running_A' },
+  spitter: { c: 'Skeleton_Mage', r: 'Skeleton_Staff', atk: 'Spellcast_Shoot', mv: 'Walking_D_Skeletons' },
+  guard: { c: 'Skeleton_Warrior', r: 'Skeleton_Blade', l: 'Skeleton_Shield_Large_A', atk: '1H_Melee_Attack_Chop', mv: 'Walking_D_Skeletons' },
+  matriarch: { c: 'Skeleton_Warrior', r: 'Skeleton_Axe', atk: '2H_Melee_Attack_Chop', mv: 'Walking_D_Skeletons' },
+};
+function kayEnemy(kay: Kay, e: any): THREE.Group {
+  const cfg = EK[e.id] || EK.slime, src = kay.chars[cfg.c], g = new THREE.Group();
+  const model = SkeletonUtils.clone(src.scene); g.add(model);
+  const bone = (n: string) => { let b: THREE.Object3D | null = null; model.traverse((o) => { if (!b && o.name === n) b = o; }); return b as THREE.Object3D | null; };
+  for (const [slot, w] of [['handslot.r', cfg.r], ['handslot.l', cfg.l]] as const) if (w) bone(slot)?.add(kay.clone(w));
+  const mixer = new THREE.AnimationMixer(model), A: Record<string, THREE.AnimationAction> = {};
+  for (const n of ['Idle_Combat', cfg.mv, cfg.atk, 'Hit_A', 'Death_A', 'Spawn_Ground_Skeletons']) { const c = THREE.AnimationClip.findByName(src.animations, n); if (c) A[n] = mixer.clipAction(c); }
+  for (const n of [cfg.atk, 'Hit_A', 'Death_A', 'Spawn_Ground_Skeletons']) if (A[n]) { A[n].setLoop(THREE.LoopOnce, 1); A[n].clampWhenFinished = n === 'Death_A'; }
+  let base = '', state = '', flash = 0;
+  const once = (n: string, sp = 1) => { const a = A[n]; if (!a) return; a.reset(); a.timeScale = sp; a.fadeIn(0.06).play(); };
+  mixer.addEventListener('finished', (ev: any) => { if (ev.action !== A.Death_A) ev.action.fadeOut(0.15); });
+  const setBase = (n: string) => { if (n === base || !A[n]) return; A[base]?.fadeOut(0.2); A[n].reset().fadeIn(0.2).play(); base = n; };
+  setBase('Idle_Combat'); if (e.state === 'spawn') once('Spawn_Ground_Skeletons', 1.6);
+  const sc = 0.46 * Math.sqrt(e.r / 12); model.scale.setScalar(sc);
+  const m = mats(W.room.biome.pal);
+  const sh = new THREE.Mesh(GEO.disc, m.shadow); sh.position.y = 0.02; sh.scale.setScalar(sc * 2.2); g.add(sh); g.userData.blob = sh;
+  const ring = new THREE.Mesh(RING, RING_MAT); ring.position.y = 0.035; ring.scale.setScalar(sc * 2.4); ring.visible = false; g.add(ring);
+  g.userData.kay = {
+    update(t: number, dt: number, en: any) {
+      if (en.state !== state) {
+        if (en.state === 'wind') once(cfg.atk, 1.1);
+        else if (en.state === 'stag') once('Hit_A', 1.3);
+        state = en.state;
+      }
+      if (en.flash > 0 && flash <= 0) once('Hit_A', 1.6);
+      flash = en.flash;
+      setBase(en.moving ? cfg.mv : 'Idle_Combat');
+      ring.visible = en.state === 'wind'; if (ring.visible) ring.scale.setScalar(sc * 2.4 * (1 + Math.sin(t * 25) * 0.08));
+      model.scale.setScalar(sc * (en.flash > 0 ? 1.06 : 1));
+      mixer.update(dt);
+    },
+    die() { ring.visible = false; for (const k in A) if (k !== 'Death_A') A[k].fadeOut(0.1); once('Death_A', 1.2); },
+    tick(dt: number) { mixer.update(dt); },
+  };
+  return g;
+}
+const RING = new THREE.RingGeometry(0.42, 0.5, 32).rotateX(-Math.PI / 2);
+const RING_MAT = new THREE.MeshBasicMaterial({ color: new THREE.Color(3, 0.4, 0.25), transparent: true, opacity: 0.85, depthWrite: false, toneMapped: false });
+
 // ---------- 世界裡其他東西（投射物、危害預警、拾取物、物件） ----------
 export class Actors {
   root = new THREE.Group();
   ens = new Map<number, THREE.Group>();
+  corpses: { g: THREE.Group; t: number }[] = [];
   objs = new Map<number, THREE.Object3D>();
   shots: THREE.InstancedMesh; haz: THREE.InstancedMesh; picks: THREE.InstancedMesh;
   private tmp = new THREE.Matrix4(); private c = new THREE.Color();
@@ -150,21 +198,23 @@ export class Actors {
     for (const im of [this.shots, this.haz, this.picks]) { im.count = 0; im.frustumCulled = false; this.root.add(im); }
     this.shots.setColorAt(0, this.c.set(0xffffff)); this.haz.setColorAt(0, this.c);
   }
-  clear() { for (const g of this.ens.values()) this.root.remove(g); this.ens.clear(); for (const o of this.objs.values()) this.root.remove(o); this.objs.clear(); }
+  clear() { for (const g of this.ens.values()) this.root.remove(g); this.ens.clear(); for (const c of this.corpses) this.root.remove(c.g); this.corpses = []; for (const o of this.objs.values()) this.root.remove(o); this.objs.clear(); }
   setBlob(on: boolean) { this.root.traverse((o) => { if (o.userData.blob) o.userData.blob.visible = on; }); }
   update(t: number, dt: number, blob: boolean) {
     const seen = new Set<number>();
     for (const e of W.ents) {
       if (e.dead) continue; seen.add(e.uid);
-      let g = this.ens.get(e.uid); if (!g) { g = enemyMesh(e); this.ens.set(e.uid, g); this.root.add(g); g.userData.blob.visible = blob; }
+      let g = this.ens.get(e.uid); if (!g) { g = this.kay ? kayEnemy(this.kay, e) : enemyMesh(e); this.ens.set(e.uid, g); this.root.add(g); g.userData.blob.visible = blob; }
       g.position.set(e.x / T, 0, e.y / T); g.rotation.y = Math.PI / 2 - e.a;
+      if (g.userData.kay) { g.userData.kay.update(t, dt, e); continue; }
       const body = g.userData.body as THREE.Group, hop = e.d.mv === 'hop' ? Math.abs(Math.sin(t * 6 + e.uid)) : 0;
       body.position.y = hop * 0.3; body.scale.set(1 + (1 - hop) * 0.08, 1 - (1 - hop) * 0.08, 1 + (1 - hop) * 0.08);
       const wind = e.state === 'wind', fl = e.flash > 0;
       for (const m of g.userData.mats as THREE.MeshStandardMaterial[]) { m.emissive.set(fl ? '#ffffff' : wind ? '#ff3020' : (e.d.look === 'blob' ? e.d.col : '#000')); m.emissiveIntensity = fl ? 2.5 : wind ? 1.2 + Math.sin(t * 30) * 0.6 : 0.2; }
       if (e.state === 'spawn') g.scale.setScalar(e.r / T * 2.2 * Math.max(0.05, 1 - e.t / 0.8)); else g.scale.setScalar(e.r / T * 2.2);
     }
-    for (const [uid, g] of this.ens) if (!seen.has(uid)) { this.root.remove(g); this.ens.delete(uid); }
+    for (const [uid, g] of this.ens) if (!seen.has(uid)) { this.ens.delete(uid); if (g.userData.kay) { g.userData.kay.die(); this.corpses.push({ g, t: 0 }); } else this.root.remove(g); }
+    this.corpses = this.corpses.filter((c) => { c.t += dt; c.g.userData.kay.tick(dt); if (c.t > 1.6) c.g.position.y -= dt * 0.8; if (c.t > 2.4) { this.root.remove(c.g); return false; } return true; });
     // 投射物
     let n = 0; for (const s of W.shots) { if (s.dead || n >= 128) continue; const r = (s.r || 5) / T * 1.2; this.tmp.makeScale(r, r, r).setPosition(s.x / T, 0.5, s.y / T); this.shots.setMatrixAt(n, this.tmp); this.c.set(s.col || '#fff').multiplyScalar(3); this.shots.setColorAt(n++, this.c); }
     this.shots.count = n; this.shots.instanceMatrix.needsUpdate = true; if (this.shots.instanceColor) this.shots.instanceColor.needsUpdate = true;
