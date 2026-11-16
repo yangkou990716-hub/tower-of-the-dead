@@ -65,3 +65,6 @@ public/models/、public/textures/
 ## 注意
 - 資產會從 2.5 MB 增加到約 15–40 MB：調高 `vite.config.ts` 的 `maximumFileSizeToCacheInBytes`，加下載進度畫面。
 - 雲端開發環境是軟體繪圖（約 4 fps）且沒有 Safari：只能驗證畫面正確，效能一律以使用者實機回報為準。
+
+## 題材提醒
+使用者明確要求：題材與美術風格未定，不要擅自定義成奇幻／黑暗奇幻／科幻。現有「亡者之塔」題材是暫定，見 CLAUDE.md。
