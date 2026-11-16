@@ -9,6 +9,9 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
+    "proto": "vite --host",
+    "proto:build": "vite build -c vite.proto.config.ts",
+    "proto:preview": "vite preview -c vite.proto.config.ts --host",
     "test": "vitest run",
     "e2e": "node test/e2e.mjs"
   },
