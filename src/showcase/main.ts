@@ -60,8 +60,9 @@ function cheapBloom(src: any, scale: number) {
   const avg: any = tap(-1, -1).add(tap(1, -1)).add(tap(-1, 1)).add(tap(1, 1)).mul(0.25);
   const lum = luminance(avg), k = smoothstep(0.82, 1.15, lum);
   const bright = rtt(vec4(avg.mul(k), 1), null, null, { resolutionScale: scale } as any);
-  const b1: any = gaussianBlur(bright, null, 3);
-  const b2: any = gaussianBlur(b1, null, 4, { resolutionScale: 0.5 });
+  // 注意：模糊節點的尺寸是依畫面大小計算，必須明確給縮放，否則會用全解析度
+  const b1: any = gaussianBlur(bright, null, 3, { resolutionScale: scale });
+  const b2: any = gaussianBlur(b1, null, 4, { resolutionScale: scale * 0.5 });
   return vec3(b1.rgb.mul(0.32).add(b2.rgb.mul(0.42)));
 }
 function buildPost() {
@@ -316,7 +317,7 @@ function report() {
   const L = [`亡者之塔 展示場景 回報（診斷版）`, `裝置：${navigator.userAgent}`,
     `後端：${be}｜畫質：${TIERS[tier].name}｜最佳化：${OPT.on ? '開' : '關'}｜GPU 計時：${gpuOK ? '可用（timestamp-query）' : '不可得（瀏覽器未提供 timestamp-query）'}`,
     `解析度：CSS ${innerWidth}×${innerHeight}｜裝置像素比 ${devicePixelRatio}｜渲染倍率 ${renderer.getPixelRatio()}｜實際繪製 ${cv.width}×${cv.height}（${(cv.width * cv.height / 1e6).toFixed(2)} MP）`,
-    `自由遊玩 ${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}｜平均 ${(S.n ? 1000 / (S.sum / S.n) : 0).toFixed(1)} fps｜最低 1 秒 ${S.minF < 1e9 ? S.minF.toFixed(0) : '-'} fps｜最慢一幀 ${S.worst.toFixed(0)} ms｜卡頓（>100 ms）${S.hitch} 次`];
+    `自由遊玩（不含基準測試）${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}｜平均 ${(S.n ? 1000 / (S.sum / S.n) : 0).toFixed(1)} fps｜最低 1 秒 ${S.minF < 1e9 ? S.minF.toFixed(0) : '-'} fps｜最慢一幀 ${S.worst.toFixed(0)} ms｜卡頓（>100 ms）${S.hitch} 次`];
   const free = secs.filter((x) => !x.stage);
   if (free.length) {
     L.push('', '【自由遊玩：最慢的 5 秒】');
@@ -384,7 +385,7 @@ function sample(real: number, upd: number, sub: number) {
   const b = W.boss && !W.boss.dead ? W.boss : null, ba = b && (b.state === 'wind' || b.state === 'act') ? (b.atk?.t || '') : '';
   if (ba && ba !== lastBossAtk) acc.evs.add('Boss:' + ba); lastBossAtk = ba;
   if (acc.ms >= 1000) {
-    const sec: Sec = { fps: acc.n * 1000 / acc.ms, worst: acc.worst, upd: acc.upd / acc.n, sub: acc.sub / acc.n, gpu: acc.gn ? acc.gpu / acc.gn : -1, dc: acc.dc, tri: acc.tri, ents: acc.ents, shots: acc.shots, parts: acc.parts, tele: acc.tele, haz: acc.haz, evs: [...acc.evs], stage: bench ? BENCH[bench.i].n : '' };
+    const sec: Sec = { fps: acc.n * 1000 / acc.ms, worst: acc.worst, upd: acc.upd / acc.n, sub: acc.sub / acc.n, gpu: acc.gn ? acc.gpu / acc.gn : -1, dc: acc.dc, tri: acc.tri, ents: acc.ents, shots: acc.shots, parts: acc.parts, tele: acc.tele, haz: acc.haz, evs: [...acc.evs], stage: bench ? BENCH[bench.i].n : performance.now() < quietUntil ? '測試後' : '' };
     if (performance.now() - S.t0 > 3000) { secs.push(sec); if (secs.length > 600) secs.shift(); }
     if (bench && bench.t > 1.5) bench.secs.push(sec);
     acc = newAcc();
@@ -439,7 +440,7 @@ function enterStage(i: number) {
   bench!.t = 0; bench!.secs = []; bench!.k = {}; acc = newAcc();
 }
 function startBench() {
-  if (bench) return; resetStats(); bench = { i: 0, t: 0, secs: [], res: [], k: {}, optWas: OPT.on }; toast('基準測試開始，請勿操作');
+  if (bench) return; bench = { i: 0, t: 0, secs: [], res: [], k: {}, optWas: OPT.on }; toast('基準測試開始，請勿操作');
   if (!W.ents.some((e: any) => e.boss)) spawnBoss();
   enterStage(0);
 }
@@ -461,7 +462,7 @@ function benchStep(dt: number) {
   if (bench.t >= st.d) {
     bench.res.push({ n: st.n, a: avgOf(bench.secs) }); setOff(st.off, false);
     bench.i++;
-    if (bench.i >= BENCH.length) { benchDone = bench.res; OPT.on = bench.optWas; applyOpt(); bench = null; clearPeak(); toast('基準測試完成，請按「產生回報」'); stats(); return; }
+    if (bench.i >= BENCH.length) { quietUntil = performance.now() + 4000; benchDone = bench.res; OPT.on = bench.optWas; applyOpt(); bench = null; clearPeak(); toast('基準測試完成，請按「產生回報」'); stats(); return; }
     enterStage(bench.i);
   }
 }
@@ -484,11 +485,14 @@ function frame(now: number) {
   S.dc = renderer.info.render.drawCalls; S.tri = renderer.info.render.triangles; S.cpu = c2 - c0;
   if (gpuOK && (++gpuTick % 4 === 0) && !gpuBusy) { gpuBusy = true; renderer.resolveTimestampsAsync('render' as any).then((v: any) => { if (typeof v === 'number' && v > 0) gpuMs = v; gpuBusy = false; }).catch(() => { gpuBusy = false; }); }
   sample(real, c1 - c0, c2 - c1);
-  S.frames++; S.t += real; S.sum += real; S.n++; S.worst = Math.max(S.worst, real); if (real > 100 && performance.now() - S.t0 > 3000) S.hitch++;
-  if (S.t >= 1000) { S.fps = S.frames * 1000 / S.t; if (performance.now() - S.t0 > 3000) S.minF = Math.min(S.minF, S.fps); S.frames = 0; S.t = 0; stats(); }
+  const freePlay = !bench && performance.now() >= quietUntil; // 基準測試中與結束後 4 秒（重新編譯）不算進自由遊玩
+  S.frames++; S.t += real;
+  if (freePlay) { S.sum += real; S.n++; S.worst = Math.max(S.worst, real); if (real > 100 && performance.now() - S.t0 > 3000) S.hitch++; }
+  if (S.t >= 1000) { S.fps = S.frames * 1000 / S.t; if (freePlay && performance.now() - S.t0 > 3000) S.minF = Math.min(S.minF, S.fps); S.frames = 0; S.t = 0; stats(); }
   hud();
 }
 let simT = 0;
+let quietUntil = 0;
 let gpuOK = false, gpuTick = 0, gpuBusy = false, gpuMs = -1;
 function update(dt: number, t: number) {
   simT = t;
