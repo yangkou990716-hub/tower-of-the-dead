@@ -35,8 +35,10 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 8_000_000,
         cleanupOutdatedCaches: true,
         navigateFallback: 'index.html',
-        // 3D 模型（只有選 3D 畫面時才下載）：第一次載入後快取，之後可離線
-        runtimeCaching: [{ urlPattern: /\/models\/.*\.glb$/, handler: 'CacheFirst', options: { cacheName: 'tower-models', expiration: { maxEntries: 80 } } }],
+        // showcase.html 是另外建置、一起發布的展示頁：瀏覽它時不要被導回遊戲的 index.html
+        navigateFallbackDenylist: [/\/showcase\.html/],
+        // 遊戲的 3D 模型（只有選 3D 畫面時才下載）：第一次載入後快取，之後可離線。只比對 models/kaykit/，不碰 showcase/models/
+        runtimeCaching: [{ urlPattern: /\/models\/kaykit\/.*\.glb$/, handler: 'CacheFirst', options: { cacheName: 'tower-models', expiration: { maxEntries: 80 } } }],
       },
     }),
   ],

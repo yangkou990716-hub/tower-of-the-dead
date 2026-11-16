@@ -1,10 +1,14 @@
-# 推送到 main 後自動測試、建置並部署到 GitHub Pages。
+# 推送後自動測試、建置並部署到 GitHub Pages：正式遊戲在根目錄，視覺展示 showcase.html 一併發布。
 # 第一次使用：到 GitHub 專案的 Settings → Pages，把 Source 設成「GitHub Actions」。
 name: Deploy
 on:
   push:
     branches: [main, renderer-3d]
   workflow_dispatch:
+    inputs:
+      showcase_ref:
+        description: Showcase 來源 commit（預設為已驗證的 proto-style db19e86；要換版本請填新的 commit 並先驗證）
+        default: db19e862989656b2f2a79fdde3f86070a8cd1e62
 permissions:
   contents: read
   pages: write
@@ -24,6 +28,18 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      # ---- Showcase：從固定的 proto-style commit 建置（不追蹤分支最新版），只取 showcase.html、它的 JS/CSS 與模型 ----
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.showcase_ref || 'db19e862989656b2f2a79fdde3f86070a8cd1e62' }}
+          path: showcase-src
+      - name: Build showcase
+        working-directory: showcase-src
+        run: |
+          npm ci
+          npx vite build -c vite.proto.config.ts
+      - name: Merge showcase into dist
+        run: bash scripts/merge-showcase.sh showcase-src/dist-proto dist
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
