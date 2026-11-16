@@ -122,8 +122,11 @@ function grass(count: number, avoid: (x: number, z: number) => boolean) {
   const base = color('#1f5a44'), tip = color('#b9e874').mul(TI);
   m.colorNode = mix(base, tip, pow(uv().y, 1.3)).mul(float(0.72).add(uv().y.mul(0.35)));
   m.normalNode = cameraViewMatrix.mul(vec4(0, 1, 0, 0)).xyz.normalize(); // 草當成一片柔和的面受光
+  // 較便宜的版本：Lambert 光照（草幾乎沒有高光，外觀差異極小），同樣的風吹、顏色與陰影
+  const lam = new THREE.MeshLambertNodeMaterial({ side: THREE.DoubleSide });
+  lam.positionNode = m.positionNode; lam.colorNode = m.colorNode; lam.normalNode = m.normalNode;
   const im = new THREE.InstancedMesh(geo, m, mats.length); mats.forEach((x, i) => im.setMatrixAt(i, x));
-  im.receiveShadow = true; im.castShadow = false; im.frustumCulled = false;
+  im.receiveShadow = true; im.castShadow = false; im.frustumCulled = false; im.userData.mats = { std: m, lam };
   return im;
 }
 

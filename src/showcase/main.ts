@@ -4,6 +4,8 @@ import './showcase.css';
 import * as THREE from 'three/webgpu';
 import { pass, vec3, vec4, float, mix, smoothstep, length, screenUV, luminance, uniform } from 'three/tsl';
 import { bloom } from 'three/addons/tsl/display/BloomNode.js';
+import { gaussianBlur } from 'three/addons/tsl/display/GaussianBlurNode.js';
+import { rtt, vec2 } from 'three/tsl';
 import { W, emptyInput, InputState } from '../sim/state';
 import { newRun, startRun, step, calcStats, mkEnemy, mkPlayer, mkShot, mkHaz } from '../sim/combat';
 import { buildRoom } from '../sim/world';
@@ -51,12 +53,26 @@ const bossGlow = new THREE.PointLight('#ff6fbf', 0, 6, 1.6); scene.add(bossGlow)
 // ---------------- 後處理：Bloom＋調色（暗部偏紫、亮部偏暖）＋暈影 ----------------
 let pipeline: THREE.RenderPipeline;
 const hurtU = uniform(0), flashU = uniform(0);
+/** 省 GPU 的泛光：亮部擷取（1/4 解析度，4 點取樣防閃爍）→ 兩層高斯模糊（1/4 與 1/8），共 5 道處理；原本的 BloomNode 是 11 道 */
+function cheapBloom(src: any, scale: number) {
+  const tex: any = src, px = vec2(1).div(vec2(innerWidth, innerHeight).mul(renderer.getPixelRatio()));
+  const tap = (dx: number, dy: number) => tex.sample(screenUV.add(px.mul(vec2(dx, dy)))).rgb;
+  const avg: any = tap(-1, -1).add(tap(1, -1)).add(tap(-1, 1)).add(tap(1, 1)).mul(0.25);
+  const lum = luminance(avg), k = smoothstep(0.82, 1.15, lum);
+  const bright = rtt(vec4(avg.mul(k), 1), null, null, { resolutionScale: scale } as any);
+  const b1: any = gaussianBlur(bright, null, 3);
+  const b2: any = gaussianBlur(b1, null, 4, { resolutionScale: 0.5 });
+  return vec3(b1.rgb.mul(0.32).add(b2.rgb.mul(0.42)));
+}
 function buildPost() {
   pipeline?.dispose();
   pipeline = new THREE.RenderPipeline(renderer);
   const sp = pass(scene, camera);
   let c: any = sp.getTextureNode('output');
-  if (TIERS[tier].bloom && !DIAG.noBloom) { const b: any = bloom(c, 0.32, 0.45, 0.88); b.setResolutionScale(TIERS[tier].bloom); c = c.add(b); }
+  if (TIERS[tier].bloom && !DIAG.noBloom) {
+    if (OPT.on) c = c.add(cheapBloom(c, TIERS[tier].bloom));
+    else { const b: any = bloom(c, 0.32, 0.45, 0.88); b.setResolutionScale(TIERS[tier].bloom); c = c.add(b); }
+  }
   let o: any = vec3(c.rgb);
   const l = luminance(o);
   o = mix(vec3(l), o, 1.18);                                                   // 稍微提高飽和
@@ -307,6 +323,13 @@ function report() {
     for (const x of [...free].sort((a, b) => a.fps - b.fps).slice(0, 5)) L.push(fmtSec(x));
     L.push('', '【自由遊玩：平常 vs 戰鬥高峰】', '平常：' + fmtAvg(avgOf(free.filter((x) => !isPeak(x)))), '高峰：' + fmtAvg(avgOf(free.filter(isPeak))));
   }
+  const all = secs.length ? secs : [];
+  if (all.length >= 5) {
+    const lock = all.filter((x) => x.fps > 28.5 && x.fps < 31.5).length / all.length, g = all.filter((x) => x.gpu > 0), gm = g.length ? g.reduce((a, x) => a + x.gpu, 0) / g.length : -1;
+    const cm = all.reduce((a, x) => a + x.upd + x.sub, 0) / all.length;
+    L.push('', `【幀率上限判斷】${(lock * 100).toFixed(0)}% 的秒數落在 30 fps｜CPU 平均 ${cm.toFixed(1)} ms｜GPU 平均 ${gm > 0 ? gm.toFixed(1) + ' ms' : '不可得'}` +
+      (lock > 0.8 ? (gm > 16.7 ? '｜GPU 每幀超過 16.7 ms，被螢幕更新（60 Hz）對齊成 30 fps' : '｜CPU 與 GPU 都低於 16.7 ms 仍鎖 30：疑似系統限制（低耗電模式等）') : ''));
+  }
   if (benchDone) { L.push('', '【基準測試（同一劇本）】'); for (const r of benchDone) L.push(`${r.n}：${fmtAvg(r.a)}`); }
   else L.push('', '（尚未跑基準測試）');
   return L.join('\n');
@@ -339,8 +362,11 @@ $('#report button').onclick = () => { $('#report').style.display = 'none'; };
 const OPT = { on: store.get('opt') !== '0' };
 const DIAG = { noBloom: false, noPost: false, hidden: [] as THREE.Object3D[] };
 const PCAP: Record<Tier, number> = { high: 1600, bal: 1000, perf: 500 };
+let optBuilt: boolean | null = null;
 function applyOpt() {
-  FX.FXC.instShots = OPT.on; FX.FXC.cap = OPT.on ? PCAP[tier] : 2400;
+  FX.FXC.instShots = OPT.on; FX.FXC.cap = OPT.on ? PCAP[tier] : 2400; FX.FXC.teleOne = OPT.on;
+  if (env) { const gm = env.grass.userData.mats; env.grass.material = OPT.on ? gm.lam : gm.std; }
+  if (optBuilt !== null && optBuilt !== OPT.on && pipeline) buildPost(); optBuilt = OPT.on;
   for (const a of actors.values()) if (a.kind === 'slime') a.model.traverse((o: any) => { if (o.isMesh) o.castShadow = !OPT.on; });
   store.set('opt', OPT.on ? '1' : '0');
 }
@@ -500,7 +526,7 @@ async function main() {
   initSim();
   grassMax = 14000;
   env = buildEnv(scene, grassMax, solidAt);
-  FX.initFx(); FX.initArcs();
+  FX.initFx(); FX.initArcs(); FX.initTele1();
   hero = new Actor('player'); scene.add(hero.root);
   applyTier();
   bar.style.width = '85%'; lp.textContent = '編譯著色器…';
@@ -508,7 +534,8 @@ async function main() {
   // 預熱：把會在戰鬥中才出現的東西（Boss、小怪、刀光、光環、彈幕、提示圈）先畫一次，避免第一次出現時卡頓
   const tmp = [new Actor('matriarch'), new Actor('slime')]; tmp.forEach((a, i) => { a.root.position.set(CX + i * 2, 0, CZ); scene.add(a.root); });
   FX.slash(CX, CZ, 0, 1.5, 2, true, '#ffcf6a'); FX.slash(CX, CZ, 1, 1.5, 2, false, '#ff7fd0'); for (let i = 0; i < 3; i++) FX.ring(CX, CZ, 2, '#ffffff');
-  FX.teleBegin(); FX.teleDraw('sector', CX, CZ, 0, 2, 1.5, 0.5, true); FX.teleDraw('circle', CX, CZ, 0, 2, 0, 0.5, false); FX.teleDraw('rect', CX, CZ, 0, 4, 0.5, 0.5, true); FX.teleEnd();
+  for (const one of [false, true]) { FX.FXC.teleOne = one; FX.teleBegin(); FX.teleDraw('sector', CX, CZ, 0, 2, 1.5, 0.5, true); FX.teleDraw('circle', CX, CZ, 0, 2, 0, 0.5, false); FX.teleDraw('rect', CX, CZ, 0, 4, 0.5, 0.5, true); FX.teleEnd(); } FX.FXC.teleOne = OPT.on;
+  env.grass.material = env.grass.userData.mats.lam; try { await renderer.compileAsync(scene, camera); } catch { /* 預熱失敗不影響執行 */ } applyOpt();
   FX.shotsBegin(); for (const c of ['#ff9ad8', '#ffb86b', '#e6ffb8', '#ffd65a', '#ff8aa0', '#a4e86a']) FX.shotDraw(CX, CZ, 0.2, c); FX.shotsEnd();
   FX.emit(20, { x: CX, y: 1, z: CZ, c: '#fff', life: [0.1, 0.2] }); FX.updFx(0.016);
   try { await renderer.compileAsync(scene, camera); } catch (e) { console.warn(e); }

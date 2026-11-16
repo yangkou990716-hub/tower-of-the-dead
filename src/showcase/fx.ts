@@ -1,7 +1,7 @@
 // 特效：GPU 實例化粒子（CPU 模擬）、地面出招提示、投射物、揮砍弧。
 import * as THREE from 'three/webgpu';
-import { instancedBufferAttribute, uv, float, vec4, color, uniform, smoothstep, mix } from 'three/tsl';
-export const FXC = { scene: null as any as THREE.Scene, particles: 1, cap: 2400, noParticles: false, noTele: false, instShots: false };
+import { instancedBufferAttribute, uv, float, vec4, color, uniform, smoothstep, mix, positionLocal, length, select } from 'three/tsl';
+export const FXC = { scene: null as any as THREE.Scene, particles: 1, cap: 2400, noParticles: false, noTele: false, instShots: false, teleOne: false };
 const G = { get scene() { return FXC.scene; } };
 
 // ---------- 粒子 ----------
@@ -90,6 +90,7 @@ let teleI = 0, teleN = 0;
 export function teleBegin() { teleI = 0; }
 /** 畫一個提示：shape 'sector'|'circle'|'rect'；p = 進度 0..1 */
 export function teleDraw(shape: string, x: number, z: number, ang: number, a: number, b: number, p: number, parry: boolean) {
+  if (FXC.teleOne) { teleDraw1(shape, x, z, ang, a, b, p, parry); return; }
   const t = tele[teleI++] || newTele();
   const g = shape === 'rect' ? rect(a, b) : sector(a, shape === 'circle' ? Math.PI * 2 : b);
   t.mesh.geometry = g; t.fill.geometry = g;
@@ -102,7 +103,35 @@ export function teleDraw(shape: string, x: number, z: number, ang: number, a: nu
   t.mesh.visible = t.fill.visible = !FXC.noTele;
 }
 export function teleEnd() {
-  if (FXC.noTele) teleI = 0; for (let i = teleI; i < tele.length; i++) tele[i].mesh.visible = tele[i].fill.visible = false; }
+  if (FXC.noTele) { teleI = 0; tele1I = 0; }
+  for (let i = FXC.teleOne ? 0 : teleI; i < tele.length; i++) tele[i].mesh.visible = tele[i].fill.visible = false;
+  for (let i = FXC.teleOne ? tele1I : 0; i < tele1.length; i++) tele1[i].mesh.visible = false;
+  if (FXC.teleOne) teleI = tele1I;
+}
+// 單層提示：外框、底色、進度填滿在同一個著色器裡（每個提示 1 次繪製、半透明只疊一層）
+interface Tele1 { mesh: THREE.Mesh; p: any; c: any; R: any; rect: any; }
+const tele1: Tele1[] = [];
+let tele1I = 0;
+function newTele1() {
+  const m = new THREE.MeshBasicNodeMaterial({ transparent: true, depthWrite: false, side: THREE.DoubleSide });
+  const p = uniform(0), c = uniform(new THREE.Color(1, 0, 0)), R = uniform(1), rect = uniform(0);
+  const radial = length(positionLocal.xz).div(R), along = positionLocal.x.div(R);
+  const k = select(rect.greaterThan(0.5), along, radial);
+  const filled = smoothstep(p.add(0.015), p.sub(0.015), k);          // 進度內側
+  const rim = smoothstep(0.9, 0.99, k);                               // 外緣亮邊（對應原本外框的邊）
+  m.colorNode = c as any;
+  const base = float(0.22).mul(float(0.6).add(rim.mul(0.4))), fillA = filled.mul(float(0.35).add(p.mul(0.3))).mul(0.8);
+  m.opacityNode = base.add(fillA.mul(float(1).sub(base))); // 等同原本兩層疊加的透明度
+  const mesh = new THREE.Mesh(new THREE.BufferGeometry(), m); mesh.renderOrder = 5; mesh.visible = false; G.scene.add(mesh);
+  const t = { mesh, p, c, R, rect }; tele1.push(t); return t;
+}
+function teleDraw1(shape: string, x: number, z: number, ang: number, a: number, b: number, p: number, parry: boolean) {
+  const t = tele1[tele1I++] || newTele1();
+  t.mesh.geometry = shape === 'rect' ? rect(a, b) : sector(a, shape === 'circle' ? Math.PI * 2 : b);
+  t.c.value.set(parry ? C_PARRY : C_DANGER); t.p.value = Math.max(0.01, p); t.R.value = a; t.rect.value = shape === 'rect' ? 1 : 0;
+  t.mesh.position.set(x, 0.075, z); t.mesh.rotation.y = -ang; t.mesh.visible = !FXC.noTele;
+}
+export function initTele1() { for (let i = 0; i < 24; i++) newTele1(); }
 
 // ---------- 投射物 ----------
 const shotPool: THREE.Mesh[] = []; const shotGeo = new THREE.SphereGeometry(1, 10, 8);
