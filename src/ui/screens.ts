@@ -189,13 +189,15 @@ export function settings() {
     <div class="field"><span>觸控輔助瞄準</span><span class="seg" data-k="aimAssist"><button data-v="1">開</button><button data-v="0">關</button></span></div>
     <div class="field"><span>觸覺回饋</span><span class="seg" data-k="haptics"><button data-v="1">開</button><button data-v="0">關</button></span></div>
     <div class="field"><span>操作提示</span><span class="seg" data-k="hints"><button data-v="1">開</button><button data-v="0">關</button></span></div>
+    <div class="field"><span>畫面（實驗）</span><span class="seg" data-k="renderer"><button data-v="2d">2D</button><button data-v="3d">3D</button></span></div>
     <p class="note">${Haptics.supported ? '觸覺回饋在 Android 與手把上有效；較新的 iOS 可能沒有反應。' : '這台裝置不支援觸覺回饋。'}操作提示是畫面上的按鍵說明。</p>
     <p class="note">省電畫質會關閉環境粒子並把畫面更新率降到每秒 30 幀，適合想省電或裝置發燙時使用。</p>
+    <p class="note">3D 畫面仍在開發中（可進房間、移動、戰鬥，特效與介面尚未完整）；切換後會重新載入。</p>
     <p class="note">存檔位置：${dbInfo.backend === 'indexeddb' ? '這台裝置的瀏覽器資料庫（IndexedDB）' : dbInfo.backend === 'localstorage' ? '備援儲存（localStorage）' : '僅記憶體，關閉後會消失'}${dbInfo.persisted ? '，已標記為不自動清除' : ''}。存檔的匯出與匯入在「踏入塔中」的旅途清單裡。</p>`,
-    buttons: [{ label: '完成', cls: 'pri' }], onClose: () => { Saves.saveSettings(); applySettings(); },
+    buttons: [{ label: '完成', cls: 'pri' }], onClose: () => { const p = Saves.saveSettings(); applySettings(); if ((s.renderer || '2d') !== (document.documentElement.dataset.renderer || '2d')) Promise.resolve(p).then(() => location.reload()); },
     setup: (root) => { const upd = () => root.querySelectorAll<HTMLElement>('.seg').forEach((sg) => { const k = sg.getAttribute('data-k')!, v = (s as any)[k]; sg.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.getAttribute('data-v') === String(typeof v === 'boolean' ? (v ? 1 : 0) : v))); });
       root.addEventListener('input', (e) => { const t = e.target as HTMLInputElement, k = t.getAttribute('data-k'); if (k) { (s as any)[k] = Number(t.value); applySettings(); if (k === 'sfx') Snd.play('coin'); } });
-      root.addEventListener('click', (e) => { const b = (e.target as HTMLElement).closest('.seg button'); if (!b) return; const k = b.parentElement!.getAttribute('data-k')!, v = b.getAttribute('data-v')!; (s as any)[k] = k === 'quality' ? v : v === '1'; Snd.play('ui'); upd(); applySettings(); }); upd(); } });
+      root.addEventListener('click', (e) => { const b = (e.target as HTMLElement).closest('.seg button'); if (!b) return; const k = b.parentElement!.getAttribute('data-k')!, v = b.getAttribute('data-v')!; (s as any)[k] = k === 'quality' || k === 'renderer' ? v : v === '1'; Snd.play('ui'); upd(); applySettings(); }); upd(); } });
 }
 export let onApplySettings = () => {}; export const setApply = (f: () => void) => { onApplySettings = f; };
 export function applySettings() { const s = Saves.settings; Snd.setVol(s.sfx); Haptics.set(s.haptics); W.assistOn = s.aimAssist; document.documentElement.style.setProperty('--bs', String(s.btnScale)); onApplySettings(); }

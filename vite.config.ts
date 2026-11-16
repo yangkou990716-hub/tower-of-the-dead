@@ -35,6 +35,8 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 8_000_000,
         cleanupOutdatedCaches: true,
         navigateFallback: 'index.html',
+        // 3D 模型（只有選 3D 畫面時才下載）：第一次載入後快取，之後可離線
+        runtimeCaching: [{ urlPattern: /\/models\/.*\.glb$/, handler: 'CacheFirst', options: { cacheName: 'tower-models', expiration: { maxEntries: 80 } } }],
       },
     }),
   ],

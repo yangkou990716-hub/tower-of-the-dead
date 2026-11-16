@@ -31,7 +31,7 @@ export interface Meta {
 }
 export interface Hub { last: number; lv: Record<string, number>; jobs: any[]; stock: Record<string, number>; }
 export interface Slot { id: number; v: number; created: number; updated: number; name: string; meta: Meta; hub: Hub; run: Run | null; }
-export interface Settings { sfx: number; music: number; shake: boolean; diff: string; btnScale: number; quality: 'high' | 'low'; multi: boolean; name: string; aimAssist: boolean; haptics: boolean; hints: boolean; }
+export interface Settings { sfx: number; music: number; shake: boolean; diff: string; btnScale: number; quality: 'high' | 'low'; multi: boolean; name: string; aimAssist: boolean; haptics: boolean; hints: boolean; renderer: '2d' | '3d'; }
 
 export const newMeta = (): Meta => ({
   shards: 0, ore: 0, herbs: 0, cls: { knight: 1 }, tal: {}, codex: {}, ach: {},
@@ -39,7 +39,7 @@ export const newMeta = (): Meta => ({
   graves: [], tut: 0,
 });
 export const newHub = (now = Date.now()): Hub => ({ last: now, lv: {}, jobs: [], stock: {} });
-export const newSettings = (): Settings => ({ sfx: 0.7, music: 0.5, shake: true, diff: 'normal', btnScale: 1, quality: 'high', multi: false, name: '', aimAssist: true, haptics: true, hints: true });
+export const newSettings = (): Settings => ({ sfx: 0.7, music: 0.5, shake: true, diff: 'normal', btnScale: 1, quality: 'high', multi: false, name: '', aimAssist: true, haptics: true, hints: true, renderer: '2d' });
 
 /** 模擬世界：一次只有一個。畫面層每幀讀它、清空 ev。 */
 export const W = {

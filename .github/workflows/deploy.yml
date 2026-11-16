@@ -3,7 +3,7 @@
 name: Deploy
 on:
   push:
-    branches: [main]
+    branches: [main, renderer-3d]
   workflow_dispatch:
 permissions:
   contents: read

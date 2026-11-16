@@ -1,5 +1,4 @@
 // 應用程式流程：標題 → 選擇旅途 → 營地 → 遠征 → 結算。把模擬、畫面、介面、存檔接在一起。
-import Phaser from 'phaser';
 import { W } from '../sim/state';
 import { newRun, startRun, shardsEarned, calcStats } from '../sim/combat';
 import { biomeOf, floorName } from '../sim/data';
@@ -15,27 +14,17 @@ import { Tutorial } from '../ui/tutorial';
 import { Bus } from './bus';
 import { Hud, itemName } from '../ui/hud';
 import * as UI from '../ui/screens';
-import { TitleScene } from '../view/TitleScene';
-import { GameScene } from '../view/GameScene';
+import type { GameRenderer } from './renderer';
+import { Renderer2D } from '../view/Renderer2D';
 
 export const App = {
-  game: null as Phaser.Game | null, state: 'boot' as 'boot' | 'title' | 'play', saveT: 0, lowFps: false,
+  game: null as any, renderer: null as GameRenderer | null, state: 'boot' as 'boot' | 'title' | 'play', saveT: 0,
 
   async boot() {
     await Saves.init(); await PWA.init(); Lifecycle.init();
     View.update();
-    const dpr = () => Math.min(devicePixelRatio || 1, View.h < 500 ? 2 : 1.5);
-    const size = () => { const d = dpr(); return { w: Math.round(View.w * d), h: Math.round(View.h * d), d }; };
-    const s0 = size();
-    this.game = new Phaser.Game({
-      type: Phaser.AUTO, parent: 'game', backgroundColor: '#06090b', banner: false, disableContextMenu: true,
-      scale: { mode: Phaser.Scale.NONE, width: s0.w, height: s0.h, zoom: 1 / s0.d },
-      render: { antialias: true, powerPreference: 'high-performance', roundPixels: false },
-      audio: { noAudio: true }, input: { keyboard: false, mouse: false, touch: false, gamepad: false },
-      fps: { smoothStep: true }, scene: [TitleScene, GameScene],
-    });
-    const fit = () => { View.update(); const s = size(); const g = this.game!; if (g.scale.zoom !== 1 / s.d) g.scale.setZoom(1 / s.d); g.scale.resize(s.w, s.h); };
-    addEventListener('resize', fit); addEventListener('orientationchange', () => setTimeout(fit, 250)); fit();
+    this.renderer = await this.makeRenderer();
+    this.game = (this.renderer as any).game ?? null; // 2D：Phaser.Game（自動化測試用）
     Input.init(document.getElementById('game')!); Hud.init(); this.bindTouch(); this.wire();
     UI.setNav({ slots: () => UI.slotsSheet(), enter: (id) => this.enterSlot(id), camp: () => this.toCamp(), start: (c, d) => this.startRun(c, d), resume: () => this.resumeRun(), abandon: () => this.abandon(), toTitle: () => this.toTitle() });
     UI.setApply(() => this.applyPerf()); UI.applySettings();
@@ -43,7 +32,19 @@ export const App = {
     this.state = 'title'; UI.showTitle();
     (window as any).__totd = { W, App, Saves, UI, Input }; // 自動化測試用
   },
-  applyPerf() { const low = Saves.settings.quality === 'low'; if (this.game && low !== this.lowFps) { this.lowFps = low; this.game.loop.targetFps = low ? 30 : 60; (this.game.loop as any).fpsLimit = low ? 30 : 0; } },
+  /** 選渲染器：網址 ?r=3d／?r=2d（會記住），或設定頁。預設 2D；3D 啟動失敗自動退回 2D。 */
+  async makeRenderer(): Promise<GameRenderer> {
+    const q = new URLSearchParams(location.search).get('r');
+    if (q === '2d' || q === '3d') { Saves.settings.renderer = q; await Saves.saveSettings(); }
+    const host = document.getElementById('game')!;
+    document.documentElement.dataset.renderer = Saves.settings.renderer === '3d' ? '3d' : '2d';
+    if (Saves.settings.renderer === '3d') {
+      try { const { Renderer3D } = await import('../view3d/Renderer3D'); const r = new Renderer3D(); await r.boot(host); return r; }
+      catch (e) { console.error('3D 渲染器啟動失敗，改用 2D', e); host.textContent = ''; Saves.settings.renderer = '2d'; Saves.saveSettings(); document.documentElement.dataset.renderer = '2d'; setTimeout(() => Hud.toast('3D 無法啟動，已改用 2D', 'bad'), 500); }
+    }
+    const r = new Renderer2D(); await r.boot(host); return r;
+  },
+  applyPerf() { this.renderer?.setLowQuality(Saves.settings.quality === 'low'); },
 
   bindTouch() {
     const t = document.getElementById('touch')!;
@@ -101,7 +102,7 @@ export const App = {
   },
   save(now = false) { this.saveT = 0; const s = Saves.cur; if (!s) return; if (this.state === 'play' && W.run && !W.over) s.run = W.run; s.hub.last = Date.now(); if (now) Saves.flush(); else Saves.queue(); },
 
-  toTitle() { Tutorial.stop(false); UI.closeAll(); this.save(true); Hud.show(false); Input.enabled = false; this.state = 'title'; Saves.cur = null; W.run = null; const g = this.game!; if (g.scene.isActive('game')) g.scene.stop('game'); if (!g.scene.isActive('title')) g.scene.start('title'); UI.showTitle(); },
+  toTitle() { Tutorial.stop(false); UI.closeAll(); this.save(true); Hud.show(false); Input.enabled = false; this.state = 'title'; Saves.cur = null; W.run = null; this.renderer!.showTitle(); UI.showTitle(); },
   async enterSlot(id: number) {
     const s = await Saves.select(id, true); if (!s) return; W.meta = s.meta; DB.requestPersist();
     UI.hideTitle();
@@ -109,14 +110,14 @@ export const App = {
   },
   toCamp() {
     Tutorial.stop(false); UI.closeAll(); this.save(true); Hud.show(false); Input.enabled = false; this.state = 'title'; W.run = null; W.over = null;
-    const g = this.game!; if (g.scene.isActive('game')) g.scene.stop('game'); if (!g.scene.isActive('title')) g.scene.start('title');
+    this.renderer!.showTitle();
     UI.hideTitle(); UI.campSheet();
   },
   startRun(cls: string, diff: string) { const s = Saves.cur!; W.meta = s.meta; const run = newRun(cls, diff); s.run = run; this.beginPlay(run, true); },
   resumeRun() { const s = Saves.cur!; if (!s.run) return this.toCamp(); W.meta = s.meta; this.beginPlay(s.run, false); },
   beginPlay(run: any, fresh: boolean) {
     UI.closeAll(); UI.hideTitle(); startRun(run); Saves.cur!.run = W.run; this.state = 'play'; Input.clear(); Input.enabled = true;
-    const g = this.game!; g.scene.stop('title'); g.scene.start('game'); Hud.show(true);
+    this.renderer!.play(); Hud.show(true);
     const b = biomeOf(run.floor); Hud.banner(b.n, floorName(run.floor) + '　' + b.sub); this.save(true);
     if (fresh && (Saves.cur!.meta.tut || 0) < 2) setTimeout(() => { if (this.state === 'play' && W.p) Tutorial.start(); }, 3200);
   },

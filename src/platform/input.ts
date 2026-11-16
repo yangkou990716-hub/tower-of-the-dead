@@ -95,3 +95,9 @@ export const Input = {
     return I;
   },
 };
+
+/** 3D：相機射線與地面（y = 0）的交點 → 模擬座標。射線以「格」為單位，tile = 每格像素（T）。 */
+export function groundHit(r: { ox: number; oy: number; oz: number; dx: number; dy: number; dz: number }, tile: number) {
+  const t = r.dy < -1e-6 ? -r.oy / r.dy : 0;
+  return { x: (r.ox + r.dx * t) * tile, y: (r.oz + r.dz * t) * tile };
+}
